@@ -1,32 +1,13 @@
-# 需求范围与资料记录
+# 需求与交付文档入口
 
-## 已确认范围
+当前业务场景：工业配件分销。需求和方案基线0.1已于2026-10-26获得项目负责人确认；进入M0环境验证，业务功能尚未开发。
 
-面向中小贸易企业的进销存 ERP，复用 Odoo 标准销售、采购、库存与开票能力，自主开发审批、外部订单导入、公司隔离及业务追溯。
+| 文档 | 回答的问题 |
+| --- | --- |
+| [公开案例调研](discovery/case-research.md) | 参考了哪些真实案例，哪些是资料事实，哪些是本项目设计 |
+| [需求基线](product/prd.md) | 谁使用系统，业务规则、首版范围和不包含的范围是什么 |
+| [方案设计](architecture/solution.md) | 哪些能力复用Odoo，哪些需要定制，如何处理权限、事务和并发 |
+| [验收计划](quality/acceptance.md) | 14条需求如何通过28个业务场景验证，预期数量和金额是什么 |
+| [交付流程](delivery/workflow.md) | 环境、审批、履约、接入、发布五个阶段如何进入和退出 |
 
-当前阶段按用户要求先创建项目和公开 GitHub 仓库，依赖全部安装在项目内，默认源码开发方式。
-
-## 可追踪的公开参考
-
-OCA 的 [Sale Tier Validation](https://github.com/OCA/sale-workflow/tree/18.0/sale_tier_validation) 已阅读，其公开工作流包括触发审批条件、申请审核、查看审核状态、全部通过后确认销售订单。这可以作为审批设计的社区实践参考，不代表某个客户的内部需求。
-
-已通过 Odoo 官方 sitemap 发现下列真实客户案例页面，但当前站点拒绝正文访问，尚未将页面标题推断为具体业务需求：
-
-- [Murray Wholesale](https://www.odoo.com/blog/customer-reviews-6/murray-wholesale-runs-8-000-products-smoothly-with-odoo-1770)
-- [KUCHT](https://www.odoo.com/blog/customer-reviews-6/kucht-integrates-sales-inventory-and-purchasing-with-odoo-to-improve-real-time-visibility-2389)
-- [Banayed Trading](https://www.odoo.com/blog/customer-reviews-6/from-tools-to-transformation-banayed-trading-s-journey-with-odoo-1911)
-
-下一阶段先补充可读取的原始案例，再整理“案例事实 → 需求推导 → 自主实现 → 验收测试”的对应关系，不把作品集设计写成客户原话。
-
-## 功能分工
-
-| 范围 | Odoo 标准能力 | 作品集计划增加的能力 |
-| --- | --- | --- |
-| 销售 | 报价、订单、订单明细 | 阈值审批、审批后修改重新审核 |
-| 采购 | 询价、采购订单、收货关联 | 采购补货演示和来源追踪 |
-| 库存 | 收发货、分批处理、退货 | 跨单据进度展示与异常约束 |
-| 开票 | 发票、退款单、订单关联 | 业务链汇总查询 |
-| 系统集成 | 已认证 ORM 调用 | 幂等订单导入、重复载荷冲突处理 |
-| 权限 | 标准角色与公司机制 | 自定义模型公司规则和接口访问验证 |
-
-首版功能表是开发方向，具体规则待需求分析后形成验收标准；当前初始化提交不包含上述自主业务逻辑。
+旧初始化阶段列出的无法读取正文的客户链接不再作为需求证据。现在的案例调研已经阅读来源正文，并把客户案例、社区参考和本项目业务规则分别记录。
