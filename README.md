@@ -2,7 +2,7 @@
 
 以 Odoo 18 社区版为基础的工业配件分销 ERP 个人工程项目。业务闭环：客户报价、审批、缺货采购、分批交付、开票、退货和贷项；外部订单接入在业务闭环之后开发。
 
-当前已完成初始化骨架，工业配件分销需求与方案基线0.1已经确认，正在验证M0开发环境。现有四个业务菜单只是标准模块入口，审批、幂等导入和业务追踪尚未实现。完整开发环境、Odoo 模块安装及业务流程尚未通过验证。
+工业配件分销需求与方案基线0.1已经确认，M0已通过原生环境安装、模块加载、登录和菜单检查，见[实测记录](docs/quality/m0-verification.md)。现有四个业务菜单仍只是标准模块入口，审批、幂等导入和业务追踪尚未实现，业务验收尚未执行。pg_trgm和PDF渲染工具缺项仍在跟踪。
 
 开发按照“案例调研 → 需求评审 → Odoo差异分析 → 分里程碑实现 → 集成测试 → 业务验收 → 发布恢复验证”推进。文档入口见[需求与交付文档](docs/requirements.md)，具体完成条件见[里程碑与流程](docs/delivery/workflow.md)。
 
@@ -52,7 +52,7 @@ VS Code 打开本项目目录，选择 `.venv/bin/python` 后使用 `Odoo: sourc
 ## 依赖管理
 
 - Odoo 源码版本固定在 [odoo-source.lock](odoo-source.lock)，下载到 `.upstream/odoo`；保留已有不同版本的源码目录，避免覆盖个人修改。
-- [requirements-dev.txt](requirements-dev.txt) 基于固定版本 Odoo 的官方依赖，额外包含项目内 PostgreSQL、调试和检查工具。
+- [requirements-dev.txt](requirements-dev.txt)记录Odoo兼容的开发依赖来源；实际安装使用已验证CPython 3.12环境生成的[requirements-dev.lock](requirements-dev.lock)，固定包括间接依赖在内的66个包。
 - 原生开发使用 `psycopg2-binary`，避免全局安装 libpq；当前范围不包含 LDAP 登录，因此未引入需要额外本机开发库的 `python-ldap`。
 - `.tools`、`.venv`、`.cache`、`.runtime`、`.upstream` 与 `.env` 不提交到 GitHub。
 - 启动脚本只管理本项目数据库，不注册系统服务；不要求 Docker。
@@ -64,7 +64,7 @@ python3 -X pycache_prefix=.cache/pycache -m unittest discover -s tests -v
 python3 -X pycache_prefix=.cache/pycache -m compileall -q scripts addons tests
 ```
 
-配置测试覆盖项目内路径、仅监听本机、随机凭据及重复初始化保护、非法端口及数据库名拒绝。当前 CI 执行这些测试与 Python 编译检查，不代表 Odoo 业务集成测试已完成。
+基础检查覆盖项目内路径、仅监听本机、随机凭据、重复初始化保护、非法配置、PostgreSQL二进制及导航验证反例。CI另设原生Odoo作业，安装项目内依赖、初始化真实数据库、运行自定义模块测试并验证登录与菜单。CI作业的实际结果和业务UAT覆盖须分别记录，不能把尚无业务测试的模块标为业务验收完成。
 
 ## 开发顺序
 

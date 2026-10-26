@@ -7,7 +7,6 @@ import secrets
 from dataclasses import dataclass
 from pathlib import Path
 
-
 DEFAULTS = {
     "PGHOST": "127.0.0.1",
     "PGPORT": "55432",

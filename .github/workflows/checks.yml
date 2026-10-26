@@ -19,3 +19,54 @@ jobs:
         run: python -X pycache_prefix=.cache/pycache -m unittest discover -s tests -v
       - name: Compile Python source
         run: python -X pycache_prefix=.cache/pycache -m compileall -q scripts addons tests
+
+  native-odoo:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      UV_CACHE_DIR: ${{ github.workspace }}/.cache/uv
+      PYTHONPYCACHEPREFIX: ${{ github.workspace }}/.cache/pycache
+      TMPDIR: ${{ github.workspace }}/.runtime/tmp
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install project-local tools and locked dependencies
+        run: |
+          mkdir -p .runtime/tmp
+          python -m venv .venv
+          .venv/bin/python -m pip install uv==0.11.14
+          .venv/bin/uv pip install --python .venv/bin/python -r requirements-dev.lock
+          .venv/bin/python scripts/fetch_odoo.py
+          .venv/bin/python scripts/manage.py configure
+      - name: Verify configuration and bundled binaries
+        run: |
+          .venv/bin/python -m unittest discover -s tests -v
+          .venv/bin/ruff check scripts tests addons
+      - name: Initialize real Odoo and run custom integration tests
+        run: |
+          .venv/bin/python scripts/manage.py init > .runtime/ci-init.log 2>&1
+          .venv/bin/python .upstream/odoo/odoo-bin -c .runtime/odoo.conf \
+            -d odoo_portfolio_ci_tests -i portfolio_trade --without-demo=all \
+            --test-enable --test-tags /portfolio_trade --stop-after-init \
+            --logfile .runtime/ci-business-tests.log
+      - name: Verify real HTTP login and navigation
+        run: |
+          .venv/bin/python .upstream/odoo/odoo-bin -c .runtime/odoo.conf > .runtime/ci-server.log 2>&1 &
+          odoo_ci_pid=$!
+          trap 'kill "$odoo_ci_pid" 2>/dev/null || true; .venv/bin/python scripts/manage.py stop-db' EXIT
+          for attempt in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:8069/web/login >/dev/null; then
+              break
+            fi
+            sleep 2
+          done
+          .venv/bin/python scripts/verify_native.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-odoo-verification
+          path: |
+            .runtime/ci-*.log
+            .runtime/m0-verification.json
