@@ -229,4 +229,3 @@ class TestSaleApprovalConcurrency(TransactionCase):
         self.assertGreaterEqual(result["retries"], 1)
         result = self.race(self.make_order(), lambda order: order.action_confirm(), change_policy)
         self.assertTrue(result.get("success"))
-

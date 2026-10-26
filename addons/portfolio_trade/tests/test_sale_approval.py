@@ -286,4 +286,3 @@ class TestSaleApproval(TransactionCase):
         self.sales.write({"company_ids": [Command.set(self.other_company.ids)], "company_id": self.other_company.id})
         with self.assertRaises(AccessError):
             event.with_user(self.sales).with_context(allowed_company_ids=self.other_company.ids).read()
-
