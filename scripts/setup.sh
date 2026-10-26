@@ -23,7 +23,7 @@ if [ ! -x .venv/bin/python ]; then
     uv venv --python 3.12 .venv
 fi
 .venv/bin/python scripts/fetch_odoo.py
-uv pip install --python .venv/bin/python -r requirements-dev.txt
+uv pip install --python .venv/bin/python -r requirements-dev.lock
 .venv/bin/python scripts/manage.py configure
 
 echo 'Dependencies installed inside this project. Next: .venv/bin/python scripts/manage.py init'

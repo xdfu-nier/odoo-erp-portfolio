@@ -20,7 +20,8 @@ from runtime import Settings, initialize_env, write_odoo_config  # noqa: E402
 
 
 def postgres_command(name: str) -> str:
-    from pgserver import POSTGRES_BIN_PATH
+    # pgserver 0.1.4 exports commands via __all__, not this constant.
+    from pgserver._commands import POSTGRES_BIN_PATH
 
     return str(Path(POSTGRES_BIN_PATH) / name)
 
