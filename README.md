@@ -64,7 +64,7 @@ python3 -X pycache_prefix=.cache/pycache -m unittest discover -s tests -v
 python3 -X pycache_prefix=.cache/pycache -m compileall -q scripts addons tests
 ```
 
-配置测试覆盖项目内路径、仅监听本机、随机凭据及重复初始化保护、非法端口及数据库名拒绝。当前 CI 执行这些测试与 Python 编译检查，不代表 Odoo 业务集成测试已完成。
+基础检查覆盖项目内路径、仅监听本机、随机凭据、重复初始化保护、非法配置、PostgreSQL二进制及导航验证反例。CI另设原生Odoo作业，安装项目内依赖、初始化真实数据库、运行自定义模块测试并验证登录与菜单。CI作业的实际结果和业务UAT覆盖须分别记录，不能把尚无业务测试的模块标为业务验收完成。
 
 ## 开发顺序
 
