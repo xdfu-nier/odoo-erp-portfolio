@@ -1,4 +1,4 @@
-from odoo import Command, fields
+from odoo import Command
 from odoo.exceptions import AccessError, UserError, ValidationError
 from odoo.tests import TransactionCase, new_test_user, tagged
 
@@ -27,10 +27,7 @@ class TestSaleApproval(TransactionCase):
             "name": "Approval bearing", "type": "service", "list_price": 100,
             "taxes_id": [Command.clear()],
         })
-        # Enables the suite's intended business policy once implemented. Before that,
-        # the central test must fail because standard confirmation bypasses approval.
-        if "portfolio_approval_enabled" in cls.company._fields:
-            cls.company.write({"portfolio_approval_enabled": True})
+        cls.company.write({"portfolio_approval_enabled": True})
 
     def order(self, price=50000, discount=0, user=None, **extra):
         user = user or self.sales
@@ -82,7 +79,7 @@ class TestSaleApproval(TransactionCase):
         created.with_user(self.sales).action_portfolio_submit()
         with self.assertRaises(UserError):
             created.with_user(self.manager).action_portfolio_approve()
-        responsible = self.order(user_id=self.manager.id)
+        responsible = self.order(user=self.manager2, user_id=self.manager.id)
         responsible.with_user(self.manager2).action_portfolio_submit()
         with self.assertRaises(UserError):
             responsible.with_user(self.manager).action_portfolio_approve()
@@ -97,13 +94,61 @@ class TestSaleApproval(TransactionCase):
             {"portfolio_approval_state": "approved"},
             {"create_uid": self.manager.id},
             {"portfolio_creator_id": self.manager.id},
+            {"portfolio_approval_enabled": False},
             {"state": "sale"},
         ):
-            with self.subTest(values=values), self.assertRaises((AccessError, UserError)):
+            with self.subTest(values=values), self.assertRaises(UserError):
                 order.with_context(portfolio_internal=True, skip_approval=True).write(values)
         for values in ({"portfolio_approval_state": "approved"}, {"create_uid": self.manager.id}, {"state": "sale"}):
-            with self.assertRaises((AccessError, UserError)):
+            with self.assertRaises(UserError):
                 self.order(**values)
+        for key, value in (("portfolio_approval_state", "approved"), ("create_uid", self.manager.id)):
+            with self.assertRaises(AccessError):
+                self.env["sale.order"].with_user(self.sales).with_context(**{f"default_{key}": value}).create({
+                    "partner_id": self.partner.id,
+                })
+
+    def test_company_and_currency_edits_invalidate(self):
+        self.manager.write({"company_ids": [Command.set((self.company | self.other_company).ids)]})
+        self.other_company.write({"portfolio_approval_enabled": True})
+        order = self.order()
+        self.approve(order)
+        audit_company = order.portfolio_approval_history_ids.company_id
+        manager_order = order.with_user(self.manager).with_context(
+            allowed_company_ids=(self.company | self.other_company).ids,
+        )
+        manager_order.write({"company_id": self.other_company.id, "warehouse_id": False})
+        self.assertEqual(manager_order.portfolio_approval_state, "draft")
+        self.assertEqual(manager_order.portfolio_approval_history_ids.company_id, audit_company)
+        foreign = self.env["res.currency"].with_context(active_test=False).search([
+            ("id", "!=", self.company.currency_id.id),
+        ], limit=1)
+        foreign.active = True
+        order = self.order()
+        self.approve(order)
+        order.write({"currency_id": foreign.id})
+        self.assertEqual(order.portfolio_approval_state, "draft")
+        with self.assertRaises(UserError):
+            order.action_confirm()
+
+    def test_notes_do_not_trigger_product_discount_policy(self):
+        order = self.order(price=100)
+        order.write({"order_line": [Command.create({
+            "display_type": "line_note", "name": "Text only", "discount": 50,
+        })]})
+        order.action_confirm()
+        self.assertEqual(order.state, "sale")
+
+    def test_old_submission_cannot_be_approved_after_policy_change(self):
+        order = self.order()
+        order.action_portfolio_submit()
+        self.assertTrue(order.portfolio_approval_current)
+        self.company.write({"portfolio_approval_discount": 5})
+        self.assertFalse(order.portfolio_approval_current)
+        with self.assertRaises(UserError):
+            order.with_user(self.manager).action_portfolio_approve()
+        order.action_portfolio_submit()
+        order.with_user(self.manager).action_portfolio_approve()
 
     def test_history_is_immutable_and_rejection_requires_reason(self):
         order = self.order()
@@ -140,8 +185,8 @@ class TestSaleApproval(TransactionCase):
             with self.subTest(values=values):
                 order = self.order()
                 self.approve(order)
-                order.write(values)
-                self.assertEqual(order.portfolio_approval_state, "draft")
+                order.with_user(self.manager).write(values)
+                self.assertEqual(order.with_user(self.manager).portfolio_approval_state, "draft")
                 with self.assertRaises(UserError):
                     order.action_confirm()
 
@@ -191,7 +236,7 @@ class TestSaleApproval(TransactionCase):
                 action()
 
     def test_foreign_currency_is_explicitly_rejected(self):
-        foreign = self.env["res.currency"].search([("id", "!=", self.company.currency_id.id)], limit=1)
+        foreign = self.env["res.currency"].with_context(active_test=False).search([("id", "!=", self.company.currency_id.id)], limit=1)
         foreign.active = True
         pricelist = self.env["product.pricelist"].create({"name": "Foreign", "currency_id": foreign.id})
         order = self.order(pricelist_id=pricelist.id)
@@ -238,8 +283,7 @@ class TestSaleApproval(TransactionCase):
         own = self.order()
         own.action_portfolio_submit()
         event = own.portfolio_approval_history_ids
-        self.sales.company_ids = [Command.set(self.other_company.ids)]
-        self.sales.company_id = self.other_company
+        self.sales.write({"company_ids": [Command.set(self.other_company.ids)], "company_id": self.other_company.id})
         with self.assertRaises(AccessError):
             event.with_user(self.sales).with_context(allowed_company_ids=self.other_company.ids).read()
 
