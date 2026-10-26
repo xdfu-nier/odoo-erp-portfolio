@@ -1,0 +1,18 @@
+{
+  "version": "0.2.0",
+  "configurations": [{
+    "name": "Odoo: source development",
+    "type": "debugpy",
+    "request": "launch",
+    "program": "${workspaceFolder}/.upstream/odoo/odoo-bin",
+    "cwd": "${workspaceFolder}",
+    "args": ["-c", "${workspaceFolder}/.runtime/odoo.conf", "--dev=xml"],
+    "envFile": "${workspaceFolder}/.env",
+    "env": {
+      "PYTHONPYCACHEPREFIX": "${workspaceFolder}/.cache/pycache",
+      "TMPDIR": "${workspaceFolder}/.runtime/tmp"
+    },
+    "justMyCode": false,
+    "console": "integratedTerminal"
+  }]
+}

@@ -1,0 +1,21 @@
+name: Project checks
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  scaffold:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Test local runtime configuration
+        run: python -X pycache_prefix=.cache/pycache -m unittest discover -s tests -v
+      - name: Compile Python source
+        run: python -X pycache_prefix=.cache/pycache -m compileall -q scripts addons tests

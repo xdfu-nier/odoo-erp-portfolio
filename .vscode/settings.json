@@ -1,0 +1,5 @@
+{
+  "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
+  "python.analysis.extraPaths": ["${workspaceFolder}/.upstream/odoo"],
+  "files.exclude": {"**/__pycache__": true}
+}

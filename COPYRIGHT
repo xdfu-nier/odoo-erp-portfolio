@@ -1,0 +1,9 @@
+Odoo ERP Portfolio
+Copyright (C) 2026 Fu Xiaoda
+
+The custom add-on and development scripts in this repository are licensed
+under the GNU Lesser General Public License, version 3 (LGPL-3.0).
+
+Odoo is a separate upstream project. Its source is downloaded into the ignored
+.upstream/odoo directory; its copyright and license remain with its authors.
+See https://github.com/odoo/odoo for the upstream source and notices.

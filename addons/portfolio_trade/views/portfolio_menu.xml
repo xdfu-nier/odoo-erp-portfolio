@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="action_portfolio_sales" model="ir.actions.act_window">
+        <field name="name">Sales / 销售订单</field>
+        <field name="res_model">sale.order</field>
+        <field name="view_mode">list,form</field>
+    </record>
+    <record id="action_portfolio_purchases" model="ir.actions.act_window">
+        <field name="name">Purchasing / 采购订单</field>
+        <field name="res_model">purchase.order</field>
+        <field name="view_mode">list,form</field>
+    </record>
+    <record id="action_portfolio_stock" model="ir.actions.act_window">
+        <field name="name">Receipts and Deliveries / 收发货</field>
+        <field name="res_model">stock.picking</field>
+        <field name="view_mode">list,form</field>
+    </record>
+    <record id="action_portfolio_invoices" model="ir.actions.act_window">
+        <field name="name">Customer Invoices / 客户发票</field>
+        <field name="res_model">account.move</field>
+        <field name="view_mode">list,form</field>
+        <field name="domain">[('move_type', 'in', ['out_invoice', 'out_refund'])]</field>
+        <field name="context">{'default_move_type': 'out_invoice'}</field>
+    </record>
+    <menuitem id="menu_portfolio_root" name="Trade Portfolio / 进销存作品集" sequence="10"/>
+    <menuitem id="menu_portfolio_sales" name="销售订单" parent="menu_portfolio_root"
+              action="action_portfolio_sales" groups="sales_team.group_sale_salesman" sequence="10"/>
+    <menuitem id="menu_portfolio_purchases" name="采购订单" parent="menu_portfolio_root"
+              action="action_portfolio_purchases" groups="purchase.group_purchase_user" sequence="20"/>
+    <menuitem id="menu_portfolio_stock" name="收发货" parent="menu_portfolio_root"
+              action="action_portfolio_stock" groups="stock.group_stock_user" sequence="30"/>
+    <menuitem id="menu_portfolio_invoices" name="客户发票" parent="menu_portfolio_root"
+              action="action_portfolio_invoices" groups="account.group_account_invoice" sequence="40"/>
+</odoo>
