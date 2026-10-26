@@ -48,7 +48,7 @@ jobs:
         run: |
           .venv/bin/python scripts/manage.py init > .runtime/ci-init.log 2>&1
           .venv/bin/python .upstream/odoo/odoo-bin -c .runtime/odoo.conf \
-            -d odoo_portfolio_ci_tests -i portfolio_trade --without-demo=all \
+            -d odoo_portfolio_m1_test -i portfolio_trade --without-demo=all \
             --test-enable --test-tags /portfolio_trade --stop-after-init \
             --logfile .runtime/ci-business-tests.log
       - name: Verify real HTTP login and navigation
