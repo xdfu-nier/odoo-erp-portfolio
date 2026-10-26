@@ -1,0 +1,99 @@
+# M1 销售审批：实现与验收记录
+
+日期：2026-10-26。模块版本 `18.0.1.1.0`；Odoo 18 固定源码
+`98e48692891fc9a3aaa7f53001305b322f53cfa2`。关联开发任务 #4。
+
+本记录覆盖销售审批子集。M1 主数据任务 #3 / UAT-001 尚未实现，M1 整体未完成。
+采购、库存、发票、退货、贷项与接入不在本次交付范围。
+
+## 实际结果
+
+特性源码提交 `8f3dac8`，合入已验证 M0 后的测试提交 `39c1c61`。
+测试仅写入 `odoo_portfolio_m1_test`，没有升级或写入 `odoo_portfolio`。
+测试使用项目内 CPython 3.12.13 与 PostgreSQL 16.2。
+
+- 完整 Odoo 模块升级及测试退出码 0：**23 个测试，0 failed，0 errors**。
+  其中17个业务/权限测试、6个独立事务并发测试；日志中的27 tests统计含类级生命周期，业务测试数以结果行23为准。
+- 日志：工作树 `.runtime/m1-verified.log`，结果行时间 `2026-10-26 09:54:15 UTC`。
+- 运行配置/原生环境辅助测试：`unittest discover -s tests -v`，7个通过。
+- `ruff check addons/portfolio_trade`：All checks passed。
+- 继承标准销售表单、公司设置表单、拒绝向导及 ACL/规则在真实模块升级中加载成功。
+  尚未执行浏览器人工点击/截图验收，不能将上述服务端测试表述为人工界面验收。
+
+测试先行提交 `cfac4d6` 的真实红灯证据在 `.runtime/m1-red.log`：
+`test_01_standard_confirmation_requires_approval` 预期 UserError，但标准确认直接成功。
+随后补齐实现、修正早期测试夹具并运行绿灯；过期政策界面指示字段另有
+`.runtime/m1-policy-ui-red.log` / `.runtime/m1-policy-ui-green.log` 回归记录。
+
+## 覆盖映射
+
+| 验收 | 本次实际覆盖 | 结果 |
+| --- | --- | --- |
+| UAT-002 | 销售单/审批历史公司隔离、跨公司读写/操作拒绝；政策禁用公司的标准确认 | 通过（审批子集） |
+| UAT-003、004 | 未税49,999.99/50,000；商品折扣10/15；文本备注不触发商品折扣政策 | 通过 |
+| UAT-005 | 普通销售无审批权限；创建者、负责人、提交人禁止自审；直接字段/创建者/context默认值伪造被拒绝 | 通过 |
+| UAT-006 | 客户、开票/收货地址、公司、币种、付款条件、交期、负责人；行商品/单位/数量/价格/折扣/税，增删与移动均失效；确认后商业修改被拒绝 | 通过 |
+| UAT-007、028 | 确认与行新增/修改/删除/移动、政策修改，以及审批与修改的双向竞争；重复审批仅一条通过结论 | 通过 |
+| UAT-020 | 事件追加记录人、时间、原因、快照；销售/经理不能创建/修改/删除历史；拒绝原因与重提 | 通过 |
+| UAT-001、008—019、021—027 | 本次审批以外的主数据、进销存、接入、完整发布/恢复及性能验收 | 未执行 |
+
+并发测试使用不同 PostgreSQL 游标和事务，夹具明确提交在专用测试库。
+通过 `pg_stat_activity.wait_event_type = 'Lock'` 验证第二事务确实等待第一事务；
+遇到真实 repeatable-read `SerializationFailure` 后回滚并用新游标重试，最终再次检查状态和权限。
+日志中的预期 SQL serialization error 与测试失败不同；最终结果无失败。
+不可变审计夹具保留在测试库作为证据，测试账号在类清理时归档。
+
+## 复现命令
+
+在特性工作树运行；配置文件包含本地凭据，不要打印或提交它。
+`--http-port=8074` 避开现有8069服务；Odoo测试模式会启动HTTP，`--no-http`不足以避免端口冲突。
+
+```sh
+mkdir -p .runtime .cache
+.venv/bin/python -X pycache_prefix=.cache/pycache .upstream/odoo/odoo-bin \
+  -c /Users/fuxiaoda/Documents/personspace/resume/odoo-erp-portfolio/.runtime/odoo.conf \
+  --addons-path=/Users/fuxiaoda/Documents/personspace/resume/odoo-erp-portfolio/.upstream/odoo/addons,/Users/fuxiaoda/Documents/personspace/resume/odoo-erp-portfolio/.worktrees/order-approval/addons \
+  -d odoo_portfolio_m1_test -u portfolio_trade --without-demo=all \
+  --test-enable --test-tags /portfolio_trade --stop-after-init --http-port=8074 \
+  --logfile=/Users/fuxiaoda/Documents/personspace/resume/odoo-erp-portfolio/.worktrees/order-approval/.runtime/m1-verified.log
+.venv/bin/python -X pycache_prefix=.cache/pycache -m unittest discover -s tests -v
+.venv/bin/ruff check addons/portfolio_trade
+```
+
+首次红灯安装使用同一命令，将 `-u` 换成 `-i`，端口8071，日志 `m1-red.log`。
+首次数据库初始化报告本地缺失可选 `pg_trgm`；缺少PDF工具的提示也存在，均未阻塞销售审批测试。
+测试库名保护是有意约束：完整并发测试在其他数据库名下拒绝创建已提交夹具。
+
+## 操作说明
+
+1. 系统设置管理员进入 **Settings → Users & Companies → Companies**，打开目标公司，
+   在 **Sales Approval Policy** 页启用政策。默认关闭；初始阈值未税50,000或任一商品行折扣>10%。
+   金额只支持公司本位币。金额须有限非负，折扣须0—100。
+2. 建立独立账号：销售使用Sales的 **User: Own Documents Only**；审批人使用Sales的
+   **Administrator**（销售经理）。经理无需系统Settings权限；普通销售和经理都不能更改公司政策。
+   限定各自允许公司，另设第二经理以演示负责人/提交人自审限制。
+3. 以销售建立50,000本位币未税报价，或100元、折扣15%的报价。通过标准Sales菜单和API创建都会受政策约束。
+   在审批前点击标准Confirm会被服务端拒绝。点击 **Submit for Approval**。
+4. 切换到另一名经理，点击 **Approve**；回到销售账号点击标准 **Confirm**。
+   创建者、负责人或提交人即使有经理权限，也不能审批自己的单据。
+   管理员创建的报价应交给另一位经理审批；不要用管理员同一账号演示全部步骤。
+5. 另建报价，提交并通过后先不确认，修改数量/价格或其他商业字段，审批立即回到Draft，
+   历史追加Invalidated。重新提交，由其他有权经理再次审批，再确认。
+6. **Reject** 打开原因向导，拒绝必须填写原因；销售修改后重新提交。
+   系统管理员改变政策后，旧审批不能放行；Sales Approval页显示提示并提供再次提交入口。
+
+政策启用公司的全部报价受约束，没有逐单退出开关。取消/确认等标准销售状态仍由Odoo管理。
+已确认单据在政策启用期间不能直接修改关键商业内容。
+
+## 设计边界与后续验收
+
+审批数据字段禁止公共create/write与context默认值伪造；内部转换通过私有方法直接调用父类ORM，
+没有可由调用方伪造的context授权标志。仅创建审计事件时窄范围提权，业务操作不整体sudo。
+历史独立保留事件发生时公司，商业改单不会搬移旧公司的审计内容。
+
+统一锁顺序是公司ID、父订单ID，升序加锁；访问权限在SQL前后检查，加锁后清除ORM旧缓存。
+所有商业行变化更新父订单版本以产生repeatable-read冲突；政策修改增加公司政策版本。
+公司行锁会串行化同公司敏感操作，这是首版正确性取舍，尚未做吞吐量或性能承诺。
+
+尚待独立规格与代码质量审查、浏览器人工验收、真实分销商品主数据和后续业务闭环验收。
+本次没有执行GitHub推送、PR发布或部署生产数据库。

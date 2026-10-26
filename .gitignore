@@ -1,9 +1,9 @@
 # Project-local tools, source checkout, environment and runtime data
-.tools/
+.tools
 .worktrees/
 .cache/
-.upstream/
-.venv/
+.upstream
+.venv
 .runtime/
 .env
 *.log
