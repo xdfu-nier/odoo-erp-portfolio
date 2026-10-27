@@ -35,7 +35,7 @@ class SaleApproval(models.Model):
     def _append_event(self, values):
         # Private (not callable through RPC). Callers first authorize and lock the
         # order. Elevation is limited to this append-only audit creation.
-        return super(SaleApproval, self.sudo()).create(values)
+        return super(SaleApproval, self.sudo()).create({**values, "occurred_at": fields.Datetime.now()})
 
 
 class SaleApprovalReject(models.TransientModel):

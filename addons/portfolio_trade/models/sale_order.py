@@ -1,8 +1,13 @@
+import contextvars
 import hashlib
 import json
 
 from odoo import _, api, fields, models
 from odoo.exceptions import AccessError, UserError
+
+# Python execution-local capability, never read from caller-controlled Odoo context.
+# It authorizes only the standard action's cursor, actor, exact records and target.
+_PORTFOLIO_STATE_CAPABILITY = contextvars.ContextVar("portfolio_state_capability", default=None)
 
 ORDER_COMMERCIAL = {
     "partner_id", "partner_invoice_id", "partner_shipping_id", "company_id", "currency_id",
@@ -16,6 +21,14 @@ PROTECTED = {
     "portfolio_creator_id", "portfolio_approval_state", "portfolio_approval_submitter_id",
     "portfolio_approval_fingerprint", "portfolio_approval_policy_version", "portfolio_revision",
     "portfolio_approval_history_ids", "portfolio_approval_enabled", "portfolio_approval_current", "create_uid",
+}
+ORDER_DERIVED_FINANCIAL = {
+    "amount_untaxed", "amount_tax", "amount_total", "amount_to_invoice", "amount_invoiced",
+    "amount_paid", "amount_undiscounted", "tax_totals",
+}
+LINE_DERIVED_FINANCIAL = {
+    "price_subtotal", "price_tax", "price_total", "amount_invoiced", "amount_to_invoice",
+    "untaxed_amount_invoiced", "untaxed_amount_to_invoice",
 }
 
 
@@ -142,10 +155,19 @@ class SaleOrder(models.Model):
 
     @api.model_create_multi
     def create(self, vals_list):
+        defaults = self.env["ir.default"]._get_model_defaults(self._name)
+        if PROTECTED.intersection(defaults) or defaults.get("state", "draft") not in ("draft", "sent"):
+            raise AccessError(_("Approval fields and state cannot be supplied through defaults."))
+        if self.env.context.get("default_state", "draft") not in ("draft", "sent"):
+            raise AccessError(_("Create a quotation before confirming it."))
         if any(f"default_{key}" in self.env.context for key in PROTECTED):
             raise AccessError(_("Approval fields cannot be supplied through defaults."))
+        if ORDER_DERIVED_FINANCIAL.intersection(defaults) or any(
+            f"default_{key}" in self.env.context for key in ORDER_DERIVED_FINANCIAL
+        ):
+            raise AccessError(_("Computed financial totals cannot be supplied through defaults."))
         for values in vals_list:
-            if PROTECTED.intersection(values):
+            if PROTECTED.intersection(values) or ORDER_DERIVED_FINANCIAL.intersection(values):
                 raise AccessError(_("Approval fields and the true creator cannot be supplied."))
             if values.get("state", "draft") not in ("draft", "sent"):
                 raise UserError(_("Create a quotation, then use the standard confirmation action."))
@@ -157,6 +179,8 @@ class SaleOrder(models.Model):
     def write(self, values):
         if PROTECTED.intersection(values):
             raise AccessError(_("Approval fields and the true creator cannot be modified directly."))
+        if ORDER_DERIVED_FINANCIAL.intersection(values):
+            raise UserError(_("Computed financial totals are derived from commercial order lines."))
         relevant = ORDER_COMMERCIAL.intersection(values) or "state" in values
         if not relevant:
             return super().write(values)
@@ -177,15 +201,32 @@ class SaleOrder(models.Model):
         if ORDER_COMMERCIAL.intersection(values):
             self._portfolio_mutable(extra)
             self._portfolio_invalidate()
-        if values.get("state") == "sale":
+        state = values.get("state")
+        capability = _PORTFOLIO_STATE_CAPABILITY.get()
+        capability_allows = (
+            capability and capability[0] is self.env.cr and capability[1] == self.env.uid
+            and capability[2].issuperset(self.ids) and capability[3] == state
+        )
+        if state and state == "sale" and not capability_allows:
+            raise UserError(_("Use the standard Confirm action to confirm a quotation."))
+        if state and not capability_allows:
+            for order in self.filtered("portfolio_approval_enabled"):
+                if order.state == "sale" or state == "cancel" or (
+                    state == "draft" and order.state != "draft"
+                ) or (state == "sent" and order.state not in ("draft", "sent")):
+                    raise UserError(_("Use the standard sales actions to cancel or reopen a quotation."))
+        if state == "sale":
             self._portfolio_check_confirmation()
         elif "state" in values and values["state"] != "sent":
-            if values["state"] == "draft" and any(
-                order.state == "sale" and order.portfolio_approval_enabled for order in self
-            ):
-                raise UserError(_("A confirmed order cannot be reset directly to a quotation."))
             self._portfolio_invalidate()
         return super().write(values)
+
+    def _portfolio_run_standard_state_action(self, state, action):
+        capability = _PORTFOLIO_STATE_CAPABILITY.set((self.env.cr, self.env.uid, frozenset(self.ids), state))
+        try:
+            return action()
+        finally:
+            _PORTFOLIO_STATE_CAPABILITY.reset(capability)
 
     def action_portfolio_submit(self):
         self._portfolio_lock()
@@ -247,7 +288,23 @@ class SaleOrder(models.Model):
     def action_confirm(self):
         self._portfolio_lock()
         self._portfolio_check_confirmation()
-        return super().action_confirm()
+        for order in self.filtered("portfolio_approval_enabled"):
+            if order.user_id != self.env.user:
+                raise AccessError(_("Only the responsible salesperson can confirm this quotation."))
+        return self._portfolio_run_standard_state_action("sale", lambda: super(SaleOrder, self).action_confirm())
+
+    def action_draft(self):
+        self._portfolio_lock()
+        for order in self.filtered("portfolio_approval_enabled"):
+            if order.picking_ids.filtered(lambda picking: picking.state == "done") or order.invoice_ids.filtered(
+                lambda invoice: invoice.state == "posted"
+            ):
+                raise UserError(_("Executed orders cannot reopen; use returns and credit notes."))
+        return self._portfolio_run_standard_state_action("draft", lambda: super(SaleOrder, self).action_draft())
+
+    def _action_cancel(self):
+        self._portfolio_lock()
+        return self._portfolio_run_standard_state_action("cancel", lambda: super(SaleOrder, self)._action_cancel())
 
 
 class SaleOrderLine(models.Model):
@@ -255,7 +312,23 @@ class SaleOrderLine(models.Model):
 
     @api.model_create_multi
     def create(self, vals_list):
-        order_ids = {values.get("order_id") or self.env.context.get("default_order_id") for values in vals_list}
+        defaults = self.env["ir.default"]._get_model_defaults(self._name)
+        if "state" in defaults or "default_state" in self.env.context:
+            raise AccessError(_("Sale line state cannot be supplied through defaults."))
+        if LINE_DERIVED_FINANCIAL.intersection(defaults) or any(
+            f"default_{key}" in self.env.context for key in LINE_DERIVED_FINANCIAL
+        ):
+            raise AccessError(_("Computed financial line totals cannot be supplied through defaults."))
+        if any(LINE_DERIVED_FINANCIAL.intersection(values) for values in vals_list):
+            raise AccessError(_("Computed financial line totals cannot be supplied directly."))
+        vals_list = [dict(values) for values in vals_list]
+        default_order = self.default_get(["order_id"]).get("order_id")
+        # Freeze the effective ORM default before taking the parent lock; super()
+        # must create under that same parent, rather than resolving defaults again.
+        for values in vals_list:
+            if "order_id" not in values:
+                values["order_id"] = default_order
+        order_ids = {values.get("order_id") for values in vals_list}
         orders = self.env["sale.order"].browse(sorted(order_ids - {None, False}))
         orders._portfolio_lock()
         orders._portfolio_mutable()
@@ -263,6 +336,8 @@ class SaleOrderLine(models.Model):
         return super().create(vals_list)
 
     def write(self, values):
+        if LINE_DERIVED_FINANCIAL.intersection(values):
+            raise UserError(_("Computed financial line totals are derived from commercial fields."))
         if not LINE_COMMERCIAL.intersection(values):
             return super().write(values)
         self.check_access("write")

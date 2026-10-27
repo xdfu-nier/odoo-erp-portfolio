@@ -108,6 +108,62 @@ class TestSaleApproval(TransactionCase):
                     "partner_id": self.partner.id,
                 })
 
+    def test_standard_state_transitions_cannot_be_forged_or_replaced_by_manager(self):
+        order = self.order()
+        with self.assertRaises(UserError):
+            order.with_user(self.sales).write({"state": "sale"})
+        self.approve(order)
+        with self.assertRaises(UserError):
+            order.with_context(portfolio_internal=True, skip_approval=True).write({"state": "sale"})
+        with self.assertRaises(AccessError):
+            order.with_user(self.manager).action_confirm()
+        order.action_confirm()
+        with self.assertRaises(UserError):
+            order.with_user(self.sales).write({"state": "sent"})
+        with self.assertRaises(UserError):
+            order.with_user(self.sales).write({"state": "draft"})
+        with self.assertRaises(UserError):
+            order.write({"state": "cancel"})
+        order.with_context(disable_cancel_warning=True).action_cancel()
+        self.assertEqual(order.state, "cancel")
+        order.action_draft()
+        self.assertEqual(order.state, "draft")
+
+    def test_audit_time_is_server_assigned(self):
+        order = self.order()
+        order.with_context(default_occurred_at="2000-01-01 00:00:00").action_portfolio_submit()
+        self.assertNotEqual(str(order.portfolio_approval_history_ids[-1].occurred_at), "2000-01-01 00:00:00")
+
+    def test_derived_financial_values_cannot_change_approval_gate(self):
+        order = self.order()
+        for values in ({"amount_untaxed": 0}, {"amount_tax": 0}, {"amount_total": 0}):
+            with self.subTest(values=values), self.assertRaises(UserError):
+                order.with_user(self.sales).write(values)
+        for values in ({"price_subtotal": 0}, {"price_tax": 0}, {"price_total": 0}):
+            with self.subTest(values=values), self.assertRaises(UserError):
+                order.order_line.with_user(self.sales).write(values)
+
+    def test_line_order_default_is_locked_and_invalidates_approval(self):
+        order = self.order()
+        self.approve(order)
+        self.env["ir.default"].set(
+            "sale.order.line", "order_id", order.id,
+            user_id=self.sales.id, company_id=self.company.id,
+        )
+        line = self.env["sale.order.line"].with_user(self.sales).create({
+            "product_id": self.product.id, "product_uom_qty": 1, "price_unit": 1,
+        })
+        self.assertEqual(line.order_id, order)
+        self.assertEqual(order.portfolio_approval_state, "draft")
+
+    def test_ir_defaults_cannot_forge_order_approval_fields(self):
+        self.env["ir.default"].set(
+            "sale.order", "portfolio_approval_state", "approved",
+            user_id=self.sales.id, company_id=self.company.id,
+        )
+        with self.assertRaises(AccessError):
+            self.env["sale.order"].with_user(self.sales).create({"partner_id": self.partner.id})
+
     def test_company_and_currency_edits_invalidate(self):
         self.manager.write({"company_ids": [Command.set((self.company | self.other_company).ids)]})
         self.other_company.write({"portfolio_approval_enabled": True})
