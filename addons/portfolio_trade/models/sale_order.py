@@ -11,11 +11,15 @@ _PORTFOLIO_STATE_CAPABILITY = contextvars.ContextVar("portfolio_state_capability
 
 ORDER_COMMERCIAL = {
     "partner_id", "partner_invoice_id", "partner_shipping_id", "company_id", "currency_id",
-    "pricelist_id", "payment_term_id", "commitment_date", "user_id", "order_line",
+    "pricelist_id", "payment_term_id", "commitment_date", "user_id", "order_line", "validity_date",
+    "note", "fiscal_position_id", "warehouse_id", "incoterm", "incoterm_location", "require_signature",
+    "require_payment", "prepayment_percent",
 }
 LINE_COMMERCIAL = {
     "order_id", "product_id", "product_uom", "product_uom_qty", "price_unit", "discount", "tax_id",
-    "display_type", "is_downpayment", "technical_price_unit", "customer_lead",
+    "display_type", "is_downpayment", "technical_price_unit", "customer_lead", "name",
+    "analytic_distribution", "product_packaging_id", "product_packaging_qty", "route_id", "is_expense",
+    "linked_line_id", "linked_line_ids",
 }
 PROTECTED = {
     "portfolio_creator_id", "portfolio_approval_state", "portfolio_approval_submitter_id",
@@ -29,6 +33,9 @@ ORDER_DERIVED_FINANCIAL = {
 LINE_DERIVED_FINANCIAL = {
     "price_subtotal", "price_tax", "price_total", "amount_invoiced", "amount_to_invoice",
     "untaxed_amount_invoiced", "untaxed_amount_to_invoice",
+}
+LINE_DERIVED_IDENTITY = {
+    "company_id", "currency_id", "order_partner_id", "salesman_id", "state", "warehouse_id",
 }
 
 
@@ -89,12 +96,24 @@ class SaleOrder(models.Model):
             "pricelist": self.pricelist_id.id,
             "terms": self.payment_term_id.id,
             "commitment": fields.Datetime.to_string(self.commitment_date),
+            "validity": fields.Date.to_string(self.validity_date),
+            "note": self.note,
+            "fiscal_position": self.fiscal_position_id.id,
+            "warehouse": self.warehouse_id.id,
+            "incoterm": self.incoterm.id,
+            "incoterm_location": self.incoterm_location,
+            "require_signature": self.require_signature,
+            "require_payment": self.require_payment,
+            "prepayment_percent": self.prepayment_percent,
             "salesperson": self.user_id.id,
             "lines": [{
                 "id": line.id, "product": line.product_id.id, "uom": line.product_uom.id,
                 "quantity": line.product_uom_qty, "price": line.price_unit, "discount": line.discount,
                 "taxes": sorted(line.tax_id.ids), "type": line.display_type,
-                "downpayment": line.is_downpayment, "lead": line.customer_lead,
+                "downpayment": line.is_downpayment, "lead": line.customer_lead, "name": line.name,
+                "analytic": line.analytic_distribution,
+                "packaging": line.product_packaging_id.id, "packaging_qty": line.product_packaging_qty,
+                "route": line.route_id.id, "expense": line.is_expense, "linked_line": line.linked_line_id.id,
             } for line in self.order_line.sorted("id")],
         }
         snapshot = json.dumps(data, sort_keys=True, separators=(",", ":"), allow_nan=False)
@@ -192,6 +211,8 @@ class SaleOrder(models.Model):
             if command[0] in (1, 2, 3, 4) and command[1]:
                 line = self.env["sale.order.line"].browse(command[1])
                 line.check_access("write")
+                if command[0] == 1 and "order_id" in command[2] and command[2]["order_id"] != line.order_id.id:
+                    raise UserError(_("Moving lines through quotation updates is not supported."))
                 affected |= line.order_id
             elif command[0] == 6:
                 lines = self.env["sale.order.line"].browse(command[2])
@@ -310,24 +331,63 @@ class SaleOrder(models.Model):
 class SaleOrderLine(models.Model):
     _inherit = "sale.order.line"
 
+    @api.constrains("linked_line_id", "linked_line_ids", "order_id")
+    def _portfolio_check_linked_order(self):
+        for line in self:
+            if line.linked_line_id and line.linked_line_id.order_id != line.order_id:
+                raise UserError(_("A linked sale line must belong to the same quotation."))
+            # The FK cascade ignores record rules. Inspect only relation identity
+            # with elevation so a hidden legacy cross-order child cannot be lost.
+            if any(child.order_id.id != line.order_id.id for child in line.sudo().linked_line_ids):
+                raise UserError(_("Linked sale lines cannot cross quotations or companies."))
+
+    def _portfolio_check_link_commands(self, values, order):
+        for command in values.get("linked_line_ids", []):
+            if command[0] in (0, 1) and "order_id" in command[2] and command[2]["order_id"] != order.id:
+                raise UserError(_("Linked sale lines cannot cross quotations or companies."))
+            if command[0] in (1, 2, 3, 4) and command[1]:
+                children = self.browse(command[1])
+            elif command[0] == 6:
+                children = self.browse(command[2])
+            else:
+                continue
+            children.check_access("write")
+            if any(child.order_id != order for child in children):
+                raise UserError(_("Linked sale lines cannot cross quotations or companies."))
+
     @api.model_create_multi
     def create(self, vals_list):
         defaults = self.env["ir.default"]._get_model_defaults(self._name)
         if "state" in defaults or "default_state" in self.env.context:
             raise AccessError(_("Sale line state cannot be supplied through defaults."))
-        if LINE_DERIVED_FINANCIAL.intersection(defaults) or any(
-            f"default_{key}" in self.env.context for key in LINE_DERIVED_FINANCIAL
+        if "linked_line_ids" in defaults or "default_linked_line_ids" in self.env.context:
+            raise AccessError(_("Linked sale line defaults are not supported."))
+        derived = LINE_DERIVED_FINANCIAL | LINE_DERIVED_IDENTITY
+        if derived.intersection(defaults) or any(
+            f"default_{key}" in self.env.context for key in derived
         ):
-            raise AccessError(_("Computed financial line totals cannot be supplied through defaults."))
-        if any(LINE_DERIVED_FINANCIAL.intersection(values) for values in vals_list):
-            raise AccessError(_("Computed financial line totals cannot be supplied directly."))
+            raise AccessError(_("Derived sale line values cannot be supplied through defaults."))
+        if any(derived.intersection(values) for values in vals_list):
+            raise AccessError(_("Derived sale line values cannot be supplied directly."))
         vals_list = [dict(values) for values in vals_list]
-        default_order = self.default_get(["order_id"]).get("order_id")
+        defaults = self.default_get(["order_id", "linked_line_id"])
+        default_order = defaults.get("order_id")
+        default_linked_line = defaults.get("linked_line_id")
         # Freeze the effective ORM default before taking the parent lock; super()
         # must create under that same parent, rather than resolving defaults again.
         for values in vals_list:
             if "order_id" not in values:
                 values["order_id"] = default_order
+            if "linked_line_id" not in values:
+                values["linked_line_id"] = default_linked_line
+        for values in vals_list:
+            self._portfolio_check_link_commands(values, self.env["sale.order"].browse(values["order_id"]))
+            linked_line_id = values.get("linked_line_id")
+            if linked_line_id:
+                linked_line = self.browse(linked_line_id)
+                linked_line.check_access("read")
+                if not linked_line.exists() or linked_line.order_id != self.env["sale.order"].browse(values["order_id"]):
+                    raise UserError(_("A linked sale line must belong to the same quotation."))
         order_ids = {values.get("order_id") for values in vals_list}
         orders = self.env["sale.order"].browse(sorted(order_ids - {None, False}))
         orders._portfolio_lock()
@@ -336,12 +396,19 @@ class SaleOrderLine(models.Model):
         return super().create(vals_list)
 
     def write(self, values):
-        if LINE_DERIVED_FINANCIAL.intersection(values):
-            raise UserError(_("Computed financial line totals are derived from commercial fields."))
+        if (LINE_DERIVED_FINANCIAL | LINE_DERIVED_IDENTITY).intersection(values):
+            raise UserError(_("Derived sale line values are maintained by the system."))
         if not LINE_COMMERCIAL.intersection(values):
             return super().write(values)
         self.check_access("write")
-        orders = self.order_id | self.env["sale.order"].browse(values.get("order_id", []))
+        for line in self:
+            self._portfolio_check_link_commands(values, line.order_id)
+        linked_line = self.browse(values["linked_line_id"]) if values.get("linked_line_id") else self.browse()
+        if linked_line:
+            linked_line.check_access("read")
+            if linked_line.order_id != self.order_id:
+                raise UserError(_("A linked sale line must belong to the same quotation."))
+        orders = self.order_id | self.env["sale.order"].browse(values.get("order_id", [])) | linked_line.order_id
         orders._portfolio_lock()
         self.invalidate_recordset()
         self.check_access("write")
@@ -353,6 +420,7 @@ class SaleOrderLine(models.Model):
 
     def unlink(self):
         self.check_access("unlink")
+        self._portfolio_check_linked_order()
         orders = self.order_id
         orders._portfolio_lock()
         self.invalidate_recordset()

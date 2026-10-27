@@ -237,6 +237,8 @@ class TestSaleApproval(TransactionCase):
             {"partner_id": partner.id}, {"partner_invoice_id": partner.id},
             {"partner_shipping_id": partner.id}, {"payment_term_id": term.id},
             {"commitment_date": "2027-01-01 10:00:00"}, {"user_id": self.manager2.id},
+            {"note": "Revised contractual terms"}, {"validity_date": "2027-01-01"},
+            {"incoterm_location": "Customer receiving dock"},
         ):
             with self.subTest(values=values):
                 order = self.order()
@@ -259,6 +261,62 @@ class TestSaleApproval(TransactionCase):
                 self.approve(order)
                 order.order_line.write(values)
                 self.assertEqual(order.portfolio_approval_state, "draft")
+
+    def test_line_description_allocation_packaging_and_route_invalidate(self):
+        for values in (
+            {"name": "Customer-specific description"},
+            {"analytic_distribution": {}},
+            {"product_packaging_id": False}, {"product_packaging_qty": 2}, {"route_id": False},
+        ):
+            with self.subTest(values=values):
+                order = self.order()
+                self.approve(order)
+                order.order_line.write(values)
+                self.assertEqual(order.portfolio_approval_state, "draft")
+
+    def test_linked_line_cannot_cross_orders_or_cascade_confirmed_lines(self):
+        source = self.order()
+        target = self.order()
+        self.approve(target)
+        target.action_confirm()
+        with self.assertRaises(UserError):
+            target.order_line.write({"linked_line_id": source.order_line.id})
+        with self.assertRaises(UserError):
+            source.order_line.write({"linked_line_ids": [Command.link(target.order_line.id)]})
+        draft_target = self.order()
+        for context in ({"default_linked_line_id": source.order_line.id}, {}):
+            values = {
+                "order_id": draft_target.id, "product_id": self.product.id,
+                "product_uom_qty": 1, "price_unit": 1,
+            }
+            if not context:
+                values["linked_line_id"] = source.order_line.id
+            with self.assertRaises(UserError):
+                self.env["sale.order.line"].with_user(self.sales).with_context(**context).create(values)
+        source.order_line.unlink()
+        self.assertTrue(target.order_line.exists())
+
+    def test_derived_line_identity_cannot_be_forged(self):
+        order = self.order(price=100, discount=15)
+        for values in (
+            {"company_id": self.other_company.id}, {"currency_id": self.company.currency_id.id},
+            {"state": "draft"}, {"order_partner_id": self.partner.id}, {"salesman_id": self.manager.id},
+        ):
+            with self.subTest(values=values), self.assertRaises(UserError):
+                order.order_line.write(values)
+        for field_name, value in (("company_id", self.company.id), ("state", "draft")):
+            with self.assertRaises(AccessError):
+                self.env["sale.order.line"].with_user(self.sales).with_context(**{f"default_{field_name}": value}).create({
+                    "order_id": order.id, "product_id": self.product.id, "price_unit": 1,
+                })
+        with self.assertRaises(UserError):
+            order.action_confirm()
+
+    def test_parent_line_update_cannot_move_to_another_order(self):
+        source, target = self.order(), self.order()
+        with self.assertRaises(UserError):
+            source.write({"order_line": [Command.update(source.order_line.id, {"order_id": target.id})]})
+        self.assertEqual(source.order_line.order_id, source)
 
     def test_line_add_delete_and_move_invalidate_both_parents(self):
         source, target = self.order(), self.order()

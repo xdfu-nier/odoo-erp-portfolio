@@ -8,16 +8,16 @@
 
 ## 实际结果
 
-初版源码提交 `8f3dac8`；安全回归修复随本记录一并提交。
+初版源码提交 `8f3dac8`，规格安全修复提交 `c254f82`；代码质量修复随本记录一并提交。
 CI专用测试库对齐提交 `9585cd3`，并发测试与原生CI统一使用下述隔离库名。
 测试仅写入 `odoo_portfolio_m1_test`，没有升级或写入 `odoo_portfolio`。
 测试使用项目内 CPython 3.12.13 与 PostgreSQL 16.2。
 
-- 安全修复后完整 Odoo 模块升级及测试：**28 个测试，0 failed，0 errors**。
-  其中22个业务/权限测试、6个独立事务并发测试；包含状态、派生金额、
-  `ir.default` 行归属和服务端审计时间回归。运行4.89秒，9,088次查询。
-  日志的32 tests统计包含类级生命周期，业务测试数以结果行28为准。
-- 日志：工作树 `.runtime/m1-review-green-exclusive.log`，结果行时间 `2026-10-27 05:04:36 UTC`。
+- 质量修复后完整 Odoo 模块升级及测试：**32 个测试，0 failed，0 errors**。
+  其中26个业务/权限测试、6个独立事务并发测试；包含状态、派生金额、
+  `ir.default` 行归属、服务端审计时间，以及下述关联完整性回归。运行6.87秒，10,312次查询。
+  日志的36 tests统计包含类级生命周期，业务测试数以结果行32为准。
+- 日志：工作树 `.runtime/m1-quality-green-exclusive.log`，结果行时间 `2026-10-27 06:52:54 UTC`。
   由主代理独占测试库执行；真实序列化冲突回滚后以新事务重试，最终无失败。
 - 运行配置/原生环境辅助测试：`unittest discover -s tests -v`，7个通过。
 - `ruff check addons/portfolio_trade`：All checks passed。
@@ -30,16 +30,17 @@ CI专用测试库对齐提交 `9585cd3`，并发测试与原生CI统一使用下
 `.runtime/m1-policy-ui-red.log` / `.runtime/m1-policy-ui-green.log` 回归记录。
 安全审查回归先在原模型执行，`.runtime/m1-review-red-exclusive.log`记录22个测试、
 9个失败、0个错误，复现派生金额、默认值和状态绕过；修复后的完整绿灯见上述专用日志。
-独立规格复审已通过，代码质量审查待完成。
+独立规格复审已通过。代码质量审查指出的派生身份字段伪造、跨单关联级联删除、
+嵌套移动锁顺序问题已修复并通过32项测试，独立代码质量复审待完成。
 
 ## 覆盖映射
 
 | 验收 | 本次实际覆盖 | 结果 |
 | --- | --- | --- |
-| UAT-002 | 销售单/审批历史公司隔离、跨公司读写/操作拒绝；政策禁用公司的标准确认 | 通过（审批子集） |
+| UAT-002 | 销售单/审批历史公司隔离、跨公司读写/操作拒绝；销售行公司/币种/客户/负责人/状态派生身份不可伪造；政策禁用公司的标准确认 | 通过（审批子集） |
 | UAT-003、004 | 未税49,999.99/50,000；商品折扣10/15；文本备注不触发商品折扣政策 | 通过 |
 | UAT-005 | 普通销售无审批权限；创建者、负责人、提交人禁止自审；直接字段/创建者/context默认值伪造被拒绝；经理不能代替负责人确认 | 通过 |
-| UAT-006 | 客户、开票/收货地址、公司、币种、付款条件、交期、负责人；行商品/单位/数量/价格/折扣/税，增删与移动均失效；确认后商业修改被拒绝；派生金额/税额不能直接写入 | 通过 |
+| UAT-006 | 客户、地址、公司、币种、付款/合同条款、交期、负责人；行商品/单位/数量/价格/折扣/税/描述/分析分配/包装/路线，增删与移动均失效；已确认行商业修改及跨单链接级联删除被拒绝；派生金额/税额不可直接写入 | 通过 |
 | UAT-007、028 | 确认与行新增/修改/删除/移动、政策修改，以及审批与修改的双向竞争；重复审批仅一条通过结论 | 通过 |
 | UAT-020 | 事件追加记录人、时间、原因、快照；销售/经理不能创建/修改/删除历史；拒绝原因与重提 | 通过 |
 | UAT-001、008—019、021—027 | 本次审批以外的主数据、进销存、接入、完整发布/恢复及性能验收 | 未执行 |
@@ -62,7 +63,7 @@ mkdir -p .runtime .cache
   --addons-path=/Users/fuxiaoda/Documents/personspace/resume/odoo-erp-portfolio/.upstream/odoo/addons,/Users/fuxiaoda/Documents/personspace/resume/odoo-erp-portfolio/.worktrees/order-approval/addons \
   -d odoo_portfolio_m1_test -u portfolio_trade --without-demo=all \
   --test-enable --test-tags /portfolio_trade --stop-after-init --http-port=8076 \
-  --logfile=/Users/fuxiaoda/Documents/personspace/resume/odoo-erp-portfolio/.worktrees/order-approval/.runtime/m1-review-green-exclusive.log
+  --logfile=/Users/fuxiaoda/Documents/personspace/resume/odoo-erp-portfolio/.worktrees/order-approval/.runtime/m1-quality-green-exclusive.log
 .venv/bin/python -X pycache_prefix=.cache/pycache -m unittest discover -s tests -v
 .venv/bin/ruff check addons/portfolio_trade
 ```
@@ -97,15 +98,17 @@ mkdir -p .runtime .cache
 
 ## 设计边界与后续验收
 
-审批数据字段、派生财务金额禁止公共create/write及context/`ir.default`伪造；正常声明的字段默认值保留。
+审批数据字段、派生财务金额以及销售行的公司/币种/客户/负责人/状态/仓库派生身份字段禁止公共create/write及context/`ir.default`伪造；正常声明的字段默认值保留。
 标准确认/取消/重置动作在私有Python执行上下文中获得绑定游标、用户、订单ID及目标状态的权限，
 没有可由调用方伪造的Odoo context授权标志，标准业务副作用仍由父类动作执行。
 仅创建审计事件时窄范围提权，业务操作不整体sudo。审计时间由服务端明确写入，不使用调用方默认值。
 历史独立保留事件发生时公司，商业改单不会搬移旧公司的审计内容。
+销售行的跨订单 `linked_line_id` 关系只允许同一报价；跨单链接、逆向关联和通过报价嵌套命令移动行均被拒绝，避免级联删除已确认行。
+分析分配、客户可见描述、包装和库存路线属于本次报价快照/失效边界；更广泛的分析会计配置及进销存自动规划仍属后续范围。
 
 统一锁顺序是公司ID、父订单ID，升序加锁；访问权限在SQL前后检查，加锁后清除ORM旧缓存。
 所有商业行变化更新父订单版本以产生repeatable-read冲突；政策修改增加公司政策版本。
 公司行锁会串行化同公司敏感操作，这是首版正确性取舍，尚未做吞吐量或性能承诺。
 
-独立规格复审已通过；尚待代码质量审查、浏览器人工验收、真实分销商品主数据和后续业务闭环验收。
+独立规格复审已通过；尚待代码质量复审、浏览器人工验收、真实分销商品主数据和后续业务闭环验收。
 本次没有执行GitHub推送、PR发布或部署生产数据库。
