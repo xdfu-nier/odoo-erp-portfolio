@@ -35,6 +35,6 @@
 
 - [x] Update README and milestone state only with checks actually run. Keep all business UAT cases unexecuted.
 - [x] Run configuration tests, `bash -n scripts/setup.sh`, Python compilation and `git diff --check`.
-- [ ] Review the exact changed files, commit M0 separately from the approved requirement baseline, and publish through a pull request.
+- [x] Review the exact changed files, commit M0 separately from the approved requirement baseline, and publish through merged PR#1. Both scaffold and native-odoo CI passed.
 
 No business-feature implementation or acceptance claim is included in this environment milestone.

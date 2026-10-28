@@ -1,0 +1,3 @@
+id,name,model_id:id,group_id:id,perm_read,perm_write,perm_create,perm_unlink
+access_sale_approval_read,Sales approval read,model_portfolio_sale_approval,sales_team.group_sale_salesman,1,0,0,0
+access_sale_approval_reject,Sales approval reject wizard,model_portfolio_sale_approval_reject,sales_team.group_sale_manager,1,1,1,1
