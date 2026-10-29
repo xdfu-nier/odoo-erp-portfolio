@@ -1,3 +1,5 @@
 id,name,model_id:id,group_id:id,perm_read,perm_write,perm_create,perm_unlink
 access_sale_approval_read,Sales approval read,model_portfolio_sale_approval,sales_team.group_sale_salesman,1,0,0,0
 access_sale_approval_reject,Sales approval reject wizard,model_portfolio_sale_approval_reject,sales_team.group_sale_manager,1,1,1,1
+access_procurement_sale_read,Purchase source sales order read,sale.model_sale_order,purchase.group_purchase_user,1,0,0,0
+access_procurement_sale_line_read,Purchase source sales line read,sale.model_sale_order_line,purchase.group_purchase_user,1,0,0,0

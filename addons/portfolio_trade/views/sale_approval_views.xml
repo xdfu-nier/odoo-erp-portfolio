@@ -40,12 +40,46 @@
             </xpath>
         </field>
     </record>
+    <record id="sale_order_form_provenance" model="ir.ui.view">
+        <field name="name">sale.order.form.portfolio.provenance</field>
+        <field name="model">sale.order</field>
+        <field name="inherit_id" ref="sale.view_order_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//div[@name='button_box']" position="inside">
+                <field name="portfolio_purchase_ids" invisible="1" groups="purchase.group_purchase_user"/>
+                <button name="action_portfolio_purchases" type="object" class="oe_stat_button"
+                        icon="fa-shopping-cart" groups="purchase.group_purchase_user"
+                        invisible="not portfolio_purchase_ids">
+                    <div class="o_stat_info"><span class="o_stat_text">Related Purchases</span></div>
+                </button>
+            </xpath>
+        </field>
+    </record>
+    <record id="purchase_order_form_provenance" model="ir.ui.view">
+        <field name="name">purchase.order.form.portfolio.provenance</field>
+        <field name="model">purchase.order</field>
+        <field name="inherit_id" ref="purchase.purchase_order_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//field[@name='partner_ref']" position="after">
+                <field name="portfolio_source_sale_id" readonly="state in ('to approve', 'purchase', 'done')"
+                       domain="[('company_id', '=', company_id), ('state', '=', 'sale')]"
+                       options="{'no_create': True}"/>
+            </xpath>
+        </field>
+    </record>
     <record id="company_form_approval" model="ir.ui.view">
         <field name="name">res.company.form.portfolio.approval</field>
         <field name="model">res.company</field>
         <field name="inherit_id" ref="base.view_company_form"/>
         <field name="arch" type="xml">
             <xpath expr="//notebook" position="inside">
+                <page string="Order Fulfillment Policy" groups="base.group_system">
+                    <group>
+                        <field name="portfolio_fulfillment_enabled"/>
+                    </group>
+                    <p>Apply company fulfillment controls to standard orders and API entries.
+                    Purchase sources remain informational and do not reserve stock.</p>
+                </page>
                 <page string="Industrial Parts Master Data" groups="base.group_system">
                     <group>
                         <field name="portfolio_masterdata_enabled"/>

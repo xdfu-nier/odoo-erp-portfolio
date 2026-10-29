@@ -54,6 +54,20 @@ class SaleOrder(models.Model):
     portfolio_approval_history_ids = fields.One2many("portfolio.sale.approval", "order_id", readonly=True, copy=False)
     portfolio_approval_enabled = fields.Boolean(related="company_id.portfolio_approval_enabled")
     portfolio_approval_current = fields.Boolean(compute="_compute_portfolio_approval_current")
+    portfolio_purchase_ids = fields.One2many(
+        "purchase.order", "portfolio_source_sale_id", string="Related Purchases", readonly=True, copy=False,
+    )
+
+    def action_portfolio_purchases(self):
+        self.ensure_one()
+        self.check_access("read")
+        purchases = self.env["purchase.order"].search([("portfolio_source_sale_id", "=", self.id)])
+        return {
+            "type": "ir.actions.act_window", "name": _("Related Purchases"),
+            "res_model": "purchase.order", "view_mode": "list,form",
+            "domain": [("id", "in", purchases.ids)],
+            "context": {"create": False, "edit": False, "delete": False},
+        }
 
     @api.depends("portfolio_approval_fingerprint", "portfolio_approval_policy_version", "company_id.portfolio_approval_policy_version")
     def _compute_portfolio_approval_current(self):
@@ -223,7 +237,10 @@ class SaleOrder(models.Model):
             for order in self:
                 if (
                     order.company_id.id != values["company_id"] and order.state == "sale"
-                    and (order.company_id.portfolio_masterdata_enabled or extra.portfolio_masterdata_enabled)
+                    and (
+                        order.company_id.portfolio_masterdata_enabled or extra.portfolio_masterdata_enabled
+                        or order.company_id.portfolio_fulfillment_enabled or extra.portfolio_fulfillment_enabled
+                    )
                 ):
                     raise UserError(_("Change the sales company on a draft quotation before confirmation."))
         if ORDER_COMMERCIAL.intersection(values):
