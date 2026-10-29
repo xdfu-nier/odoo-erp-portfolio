@@ -466,3 +466,96 @@ class TestAccountFulfillment(FulfillmentLedgerCommon):
                 self.assertEqual(credit.state, "posted")
                 self.assertEqual(credit.invoice_line_ids.balance, 765)
                 self.assertEqual(credit.invoice_line_ids.amount_currency, 765)
+
+    def test_sales_credit_product_cannot_escape_reservation_by_becoming_tax_line(self):
+        self.invoice.action_post()
+        self.make_return(10)
+        credit = self.make_invoice(10, original=self.invoice)
+        commercial = credit.invoice_line_ids
+        self.assertEqual(credit.amount_untaxed, 850)
+        context = {
+            "skip_invoice_sync": True, "skip_invoice_line_sync": True,
+            "check_move_validity": False,
+        }
+
+        def classification_snapshot():
+            accounting = self.accounting_snapshot()
+            entries = self.env["account.move.line"].search([("company_id", "=", self.company.id)])
+            return accounting, tuple((
+                entry.id, entry.display_type, entry.account_id.id, entry.product_id.id,
+                entry.product_uom_id.id, entry.price_unit, entry.discount,
+                entry.debit, entry.credit, entry.amount_currency, tuple(entry.tax_ids.ids),
+            ) for entry in entries)
+
+        with self.env.cr.savepoint():
+            before = classification_snapshot()
+            try:
+                commercial.with_context(**context).write({"display_type": "tax"})
+            except UserError:
+                self.assertEqual(classification_snapshot(), before)
+            else:
+                self.env.flush_all()
+                self.env.invalidate_all()
+                reserved = self.api("financial_facts")(self.line)[self.line.id]["credit_reserved"]
+                if commercial.display_type == "product" and reserved == 10:
+                    self.assertEqual(classification_snapshot(), before)
+                    return
+                observed = {
+                    "classification": commercial.display_type,
+                    "lines": [(entry.id, entry.display_type, entry.quantity, entry.balance,
+                               entry.amount_currency, entry.sale_line_ids.ids)
+                              for entry in credit.line_ids],
+                    "balanced": sum(credit.line_ids.mapped("balance")),
+                    "credit_reserved_after_write": reserved,
+                }
+                try:
+                    credit.with_context(**context).action_post()
+                except UserError as error:
+                    observed["post_error"] = str(error)
+                else:
+                    self.env.flush_all()
+                    self.env.invalidate_all()
+                    observed["posted_state"] = credit.state
+                    observed["posted_lines"] = [(entry.id, entry.display_type, entry.quantity,
+                                                 entry.balance, entry.sale_line_ids.ids)
+                                                for entry in credit.line_ids]
+                try:
+                    second = self.make_invoice(10, original=self.invoice)
+                except UserError as error:
+                    observed["second_claim_error"] = str(error)
+                else:
+                    observed["second_claim"] = (second.id, second.state, second.amount_untaxed)
+                self.env.flush_all()
+                self.env.invalidate_all()
+                observed["credit_reserved_final"] = self.api("financial_facts")(self.line)[self.line.id]["credit_reserved"]
+                self.fail(f"A source-linked commercial credit must remain a product reservation: {observed}")
+
+    def test_native_invoice_preserves_linked_sales_sections_and_notes(self):
+        order = self.env["sale.order"].with_user(self.sales).with_company(self.company).create({
+            "partner_id": self.customer.id, "company_id": self.company.id, "user_id": self.sales.id,
+            "order_line": [
+                Command.create({"display_type": "line_section", "name": "Mechanical parts"}),
+                Command.create({
+                    "product_id": self.product.id, "product_uom": self.product.uom_id.id,
+                    "product_uom_qty": 1, "price_unit": 100, "discount": 15,
+                    "tax_id": [Command.clear()],
+                }),
+                Command.create({"display_type": "line_note", "name": "Retain delivery documents"}),
+            ],
+        })
+        order.action_portfolio_submit()
+        order.with_user(self.manager).action_portfolio_approve()
+        order.action_confirm()
+        self.validate(self.receipt_backorder, 30)
+        self.validate(order.picking_ids, 1)
+        invoice = order.with_user(self.billing)._create_invoices().with_user(self.billing)
+        for display in ("line_section", "line_note"):
+            self.assertEqual(
+                invoice.invoice_line_ids.filtered(lambda entry: entry.display_type == display).sale_line_ids,
+                order.order_line.filtered(lambda source: source.display_type == display),
+            )
+        self.assertEqual(invoice.invoice_line_ids.filtered(lambda entry: entry.display_type == "product").quantity, 1)
+        invoice.action_post()
+        self.assertEqual(invoice.state, "posted")
+        self.assertEqual(invoice.amount_untaxed, 85)
+        self.assertEqual(sum(invoice.line_ids.mapped("balance")), 0)
