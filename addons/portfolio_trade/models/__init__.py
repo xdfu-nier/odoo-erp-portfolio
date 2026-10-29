@@ -2,4 +2,7 @@ from . import master_data as master_data
 from . import purchase_order as purchase_order
 from . import res_company as res_company
 from . import sale_approval as sale_approval
+from . import sale_fulfillment as sale_fulfillment
 from . import sale_order as sale_order
+from . import stock_fulfillment as stock_fulfillment
+from . import stock_quant as stock_quant
