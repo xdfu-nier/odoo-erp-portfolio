@@ -19,7 +19,7 @@ RAW_LINE = {
     "currency_rate", "amount_residual", "amount_residual_currency", "parent_state",
     "tax_base_amount", "quantity_product_uom",
 }
-RAW_MOVE = {"amount_untaxed", "amount_tax", "amount_total", "amount_residual", "tax_totals", "invoice_currency_rate"}
+RAW_MOVE = {"amount_untaxed", "amount_tax", "amount_total", "amount_residual", "tax_totals", "invoice_currency_rate", "direction_sign"}
 LINE_FACTS = RAW_LINE | {
     "move_id", "company_id", "product_id", "product_uom_id", "quantity", "price_unit",
     "discount", "tax_ids", "sale_line_ids", "display_type", "is_downpayment", "currency_id",
@@ -63,6 +63,16 @@ def _defaults(model, values):
     return {**model.default_get(sorted(names)), **values}
 
 
+def _pending_source_orders(env, commands):
+    """Resolve the real parent company before an inline SOL exists in the ORM."""
+    orders = env["sale.order"]
+    for command in _relation_commands(commands):
+        if command[0] == 0:
+            values = {**env["sale.order.line"].default_get(["order_id"]), **command[2]}
+            orders |= env["sale.order"].browse(values.get("order_id") or [])
+    return orders
+
+
 def _scope(records, values_list=(), creating=False):
     """Bound current, candidate, defaults, nested and stolen-line identities."""
     env = records.env
@@ -70,7 +80,8 @@ def _scope(records, values_list=(), creating=False):
     moves = records if records._name == "account.move" else records.sudo().move_id
     entries = records if records._name == "account.move.line" else records.sudo().line_ids
     companies = moves.sudo().company_id | entries.sudo().company_id
-    source_defaults = env["account.move.line"].default_get(["sale_line_ids"])
+    source_defaults = env["account.move.line"].default_get(["sale_line_ids", "account_id"])
+    pending_orders = env["sale.order"]
     for supplied in values_list:
         values = _defaults(records, supplied) if creating else supplied
         companies |= env["res.company"].browse(values.get("company_id") or [])
@@ -82,6 +93,7 @@ def _scope(records, values_list=(), creating=False):
         moves |= env["account.move"].browse(values.get("reversed_entry_id") or [])
         if records._name == "account.move.line":
             sources |= env["sale.order.line"].browse(_relation_ids(values.get("sale_line_ids")))
+            pending_orders |= _pending_source_orders(env, values.get("sale_line_ids"))
         for field in ("line_ids", "invoice_line_ids"):
             for command in _relation_commands(values.get(field, [])):
                 if command[0] in (1, 2, 3, 4):
@@ -89,8 +101,11 @@ def _scope(records, values_list=(), creating=False):
                 elif command[0] == 6:
                     entries |= env["account.move.line"].browse(command[2])
                 if command[0] in (0, 1):
-                    nested = {**source_defaults, **command[2]}
+                    # Only CREATE applies account/source defaults. UPDATE keeps
+                    # its current canonical identities unless explicitly edited.
+                    nested = {**source_defaults, **command[2]} if command[0] == 0 else command[2]
                     sources |= env["sale.order.line"].browse(_relation_ids(nested.get("sale_line_ids")))
+                    pending_orders |= _pending_source_orders(env, nested.get("sale_line_ids"))
                     companies |= env["res.company"].browse(nested.get("company_id") or [])
                     companies |= env["account.account"].browse(nested.get("account_id") or []).sudo().company_ids
                     moves |= env["account.move"].browse(nested.get("move_id") or [])
@@ -98,6 +113,15 @@ def _scope(records, values_list=(), creating=False):
     originals = moves.sudo().reversed_entry_id
     sources |= (entries.sudo() | moves.sudo().line_ids | originals.line_ids).sale_line_ids
     companies |= moves.sudo().company_id | originals.company_id | sources.sudo().order_id.company_id
+    pending_companies = pending_orders.sudo().company_id
+    if pending_orders and (_protected(sources) or any(pending_companies.mapped("portfolio_fulfillment_enabled"))):
+        # Existing quotations and sale lines are the financial source; invoice
+        # mutations do not create that business source as a side effect. Resolve
+        # and authorize it before creating any header, AML or SOL, including in
+        # source-default and nested-write paths.
+        require_billing(env, companies | pending_companies)
+        pending_orders.with_user(env.uid).check_access("read")
+        raise UserError(env._("Create the sales source line before invoicing; inline sales source creation is not supported."))
     return sources, moves, companies
 
 
@@ -140,11 +164,17 @@ def _preflight(records, values_list, creating=False):
                     ).sudo()
                     if linked.filtered(lambda line: line.move_id.state == "posted"):
                         raise UserError(env._("Posted invoice lines cannot be edited or moved through another invoice."))
+                    if command[0] == 1:
+                        parent = env["account.move"].browse(command[2].get("move_id") or []).sudo()
+                        if parent.state == "posted":
+                            raise UserError(env._("Invoice line commands cannot attach facts to a posted invoice."))
                     if command[0] == 1 and "sale_line_ids" in command[2] and linked.sale_line_ids:
                         if not _resulting_ids(linked.sale_line_ids.ids, command[2]["sale_line_ids"]):
                             raise UserError(env._("Retain the sales source on a draft invoice line, or delete the claim."))
         if not creating:
             moves = records if records._name == "account.move" else records.sudo().move_id
+            if records._name == "account.move.line":
+                moves |= env["account.move"].browse(values.get("move_id") or []).sudo()
             facts = MOVE_FACTS if records._name == "account.move" else LINE_FACTS
             if facts.intersection(values) and moves.filtered(lambda move: move.state == "posted"):
                 if not (set(values) <= {"state"} and permits_state(moves, values.get("state"))):
@@ -248,12 +278,15 @@ def _validate(moves, sources, before=None, posting=False):
         if move._get_unbalanced_moves({"records": move}):
             raise UserError(env._("The sales invoice must remain balanced."))
         base_lines, _tax_lines = move._get_rounded_base_and_tax_lines(round_from_tax_lines=False)
+        # For the two supported customer move types this is the native formula,
+        # derived from canonical move_type rather than a writable computed cache.
+        direction = 1 if move.move_type == "out_refund" else -1
         for base in base_lines:
             entry = base["record"]
             details = base["tax_details"]
             if (
-                not move.currency_id.is_zero(entry.amount_currency - move.direction_sign * details["total_excluded_currency"])
-                or not move.company_id.currency_id.is_zero(entry.balance - move.direction_sign * details["total_excluded"])
+                not move.currency_id.is_zero(entry.amount_currency - direction * details["total_excluded_currency"])
+                or not move.company_id.currency_id.is_zero(entry.balance - direction * details["total_excluded"])
                 or not move.currency_id.is_zero(entry.price_subtotal - details["raw_total_excluded_currency"])
                 or not move.currency_id.is_zero(entry.price_total - details["raw_total_included_currency"])
             ):

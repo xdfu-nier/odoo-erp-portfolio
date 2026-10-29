@@ -1,9 +1,10 @@
 """Financial mutation boundaries exercised through native account ORM/actions."""
 import unittest
+from unittest.mock import patch
 
 from odoo import Command, fields
 from odoo.exceptions import AccessError, UserError
-from odoo.tests import tagged
+from odoo.tests import new_test_user, tagged
 
 from .test_fulfillment_ledger import FulfillmentLedgerCommon
 
@@ -356,3 +357,112 @@ class TestAccountFulfillment(FulfillmentLedgerCommon):
                 before = self.accounting_snapshot()
                 self.assert_denied_before_revision(lambda: entries.write({"sale_line_ids": value}))
                 self.assertEqual(self.accounting_snapshot(), before)
+
+    def test_draft_aml_cannot_move_into_posted_parent_directly_or_nested(self):
+        self.invoice.invoice_line_ids.write({"quantity": 60})
+        self.invoice.action_post()
+        draft = self.make_invoice(1)
+        draft.invoice_line_ids.write({"price_unit": 0})
+        for nested in (False, True):
+            with self.subTest(nested=nested), self.env.cr.savepoint():
+                before = self.accounting_snapshot()
+                with unittest.TestCase.assertRaises(self, UserError):
+                    values = {"move_id": self.invoice.id}
+                    if nested:
+                        draft.write({"invoice_line_ids": [Command.update(draft.invoice_line_ids.id, values)]})
+                    else:
+                        draft.invoice_line_ids.write(values)
+                self.assertEqual(self.accounting_snapshot(), before)
+
+    def test_nested_effective_account_default_authorizes_company_before_revision(self):
+        model = self.env["account.move"].with_user(self.billing_a).sudo().with_context(
+            allowed_company_ids=self.company.ids,
+        )
+        account_a = self.company_data["default_account_revenue"]
+        account_b = self.other_data["default_account_revenue"]
+        omitted = self.invoice_values(0)
+        omitted["invoice_line_ids"][0][2].pop("account_id")
+        positive = model.with_context(default_account_id=account_a.id).create(omitted)
+        self.assertEqual(positive.invoice_line_ids.account_id, account_a)
+        overridden = model.with_context(default_account_id=account_b.id).create(self.invoice_values(0))
+        self.assertEqual(overridden.invoice_line_ids.account_id, account_a)
+        with self.env.cr.savepoint():
+            before = self.accounting_snapshot()
+            observed_locks = []
+            native_lock = type(self.company)._portfolio_lock_fulfillment
+
+            def observe_native_lock(companies):
+                # Delegate the real lock unchanged; observe ordering even when
+                # an outer accounting savepoint would roll its revision back.
+                observed_locks.extend(companies.ids)
+                return native_lock(companies)
+
+            try:
+                with patch.object(type(self.company), "_portfolio_lock_fulfillment", observe_native_lock):
+                    with unittest.TestCase.assertRaises(self, AccessError):
+                        model.with_context(default_account_id=account_b.id).create(omitted)
+            except UserError as error:
+                self.fail(f"Foreign effective account default requires actor AccessError before accounting validation: {error}")
+            self.assertFalse(observed_locks, "Candidate account authorization must precede the technical revision.")
+            self.assertEqual(self.accounting_snapshot(), before)
+
+    def source_creation_snapshot(self):
+        accounting = self.accounting_snapshot()
+        sources = self.env["sale.order.line"].search([("company_id", "=", self.company.id)])
+        return accounting, tuple((source.id, source.order_id.id, source.product_id.id,
+                                  source.product_uom_qty, tuple(source.invoice_lines.ids)) for source in sources)
+
+    def test_nested_new_sales_source_cannot_bypass_billing_or_leave_half_rows(self):
+        composite = new_test_user(
+            self.env, login="invoice_source_sales_billing",
+            groups="sales_team.group_sale_salesman,account.group_account_invoice",
+            company_id=self.company.id, company_ids=[Command.set(self.companies.ids)],
+        )
+        for actor, error in ((self.sales, AccessError), (composite, UserError)):
+            draft = self.env["sale.order"].with_user(actor).with_company(self.company).create({
+                "partner_id": self.customer.id, "company_id": self.company.id, "user_id": actor.id,
+                "order_line": [Command.create({
+                    "product_id": self.product.id, "product_uom": self.product.uom_id.id,
+                    "product_uom_qty": 1, "price_unit": 100, "tax_id": [Command.clear()],
+                })],
+            })
+            values = self.invoice_values(1)
+            values["invoice_line_ids"][0][2]["sale_line_ids"] = [Command.create({
+                "order_id": draft.id, "product_id": self.product.id,
+                "product_uom": self.product.uom_id.id, "product_uom_qty": 1,
+                "price_unit": 100, "tax_id": [Command.clear()],
+            })]
+            with self.subTest(actor=actor.login), self.env.cr.savepoint():
+                before = self.source_creation_snapshot()
+                with unittest.TestCase.assertRaises(self, error):
+                    self.env["account.move"].with_user(actor).sudo().with_context(
+                        allowed_company_ids=self.company.ids,
+                    ).create(values)
+                self.assertEqual(self.source_creation_snapshot(), before)
+
+    def test_refund_write_direction_sign_cannot_corrupt_native_amounts(self):
+        self.invoice.action_post()
+        self.make_return(10)
+        credit = self.make_invoice(10, original=self.invoice)
+        with self.env.cr.savepoint():
+            before = self.accounting_snapshot()
+            try:
+                credit.write({"direction_sign": -1, "invoice_line_ids": [Command.update(
+                    credit.invoice_line_ids.id, {"quantity": 9},
+                )]})
+            except UserError:
+                self.assertEqual(self.accounting_snapshot(), before)
+            else:
+                self.env.flush_all()
+                self.env.invalidate_all()
+                self.assertEqual(credit.move_type, "out_refund")
+                self.assertEqual(credit.invoice_line_ids.quantity, 9)
+                self.assertEqual(credit.invoice_line_ids.balance, 765)
+                self.assertEqual(credit.invoice_line_ids.amount_currency, 765)
+                self.assertEqual(credit.amount_untaxed, 765)
+                credit.action_post()
+                self.env.flush_all()
+                self.env.invalidate_all()
+                self.assertEqual(credit.state, "posted")
+                self.assertEqual(credit.invoice_line_ids.balance, 765)
+                self.assertEqual(credit.invoice_line_ids.amount_currency, 765)
