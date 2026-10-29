@@ -55,14 +55,14 @@ class TestMasterData(TransactionCase):
             })], **values,
         })
 
-    def purchase(self):
+    def purchase(self, **values):
         return self.env["purchase.order"].with_user(self.buyer).with_company(self.company).create({
             "partner_id": self.vendor.id,
             "order_line": [Command.create({
                 "product_id": self.product.id, "product_qty": 1, "price_unit": 60,
                 "product_uom": self.product.uom_po_id.id, "date_planned": fields.Datetime.now(),
                 "taxes_id": [Command.clear()],
-            })],
+            })], **values,
         })
 
     def reject_both_sales_gates(self, order, reason):
@@ -298,3 +298,114 @@ class TestMasterData(TransactionCase):
         self.assertEqual(order.state, "draft")
         with self.assertRaises(UserError):
             order.action_confirm()
+
+    def test_public_purchase_approve_revalidates_catalog(self):
+        self.enable_policy()
+        order = self.purchase()
+        self.vendor.ref = False
+        with self.assertRaisesRegex(UserError, "vendor"), self.cr.savepoint():
+            order.button_approve()
+        self.assertEqual(order.state, "draft")
+        self.assertFalse(order.picking_ids)
+
+    def test_purchase_raw_state_promotions_require_standard_actions(self):
+        self.enable_policy()
+        order = self.purchase()
+        for state in ("to approve", "purchase", "done"):
+            with self.subTest(state=state), self.assertRaises(UserError), self.cr.savepoint():
+                order.with_context(skip_master_data=True, portfolio_purchase_state_capability=True).write({"state": state})
+        self.assertEqual(order.state, "draft")
+        self.assertFalse(order.picking_ids)
+
+    def test_purchase_state_promotion_cannot_mix_invalid_new_commercial_values(self):
+        self.enable_policy()
+        order = self.purchase()
+        incomplete = self.env["res.partner"].create({"name": "Incomplete replacement vendor"})
+        with self.assertRaises(UserError), self.cr.savepoint():
+            order.write({"state": "purchase", "partner_id": incomplete.id})
+        self.assertEqual(order.partner_id, self.vendor)
+        self.assertEqual(order.state, "draft")
+        self.assertFalse(order.picking_ids)
+
+    def test_purchase_create_cannot_supply_confirmed_or_submitted_state(self):
+        self.enable_policy()
+        before = self.env["purchase.order"].search_count([])
+        for state in ("to approve", "purchase", "done"):
+            with self.subTest(state=state), self.assertRaises(UserError), self.cr.savepoint():
+                self.purchase(state=state)
+        self.assertEqual(self.env["purchase.order"].search_count([]), before)
+
+    def test_purchase_context_default_cannot_supply_confirmed_state(self):
+        self.enable_policy()
+        with self.assertRaises(UserError), self.cr.savepoint():
+            self.env["purchase.order"].with_user(self.buyer).with_company(self.company).with_context(
+                default_state="purchase",
+            ).create({"partner_id": self.vendor.id})
+
+    def test_purchase_user_default_cannot_supply_confirmed_state(self):
+        self.enable_policy()
+        self.env["ir.default"].set("purchase.order", "state", "purchase", user_id=self.buyer.id)
+        with self.assertRaises(UserError), self.cr.savepoint():
+            self.purchase()
+
+    def test_two_step_purchase_manager_approval_revalidates_changed_catalog(self):
+        self.enable_policy()
+        self.company.write({"po_double_validation": "two_step", "po_double_validation_amount": 1})
+        manager = new_test_user(
+            self.env, login="catalog_purchase_manager", groups="purchase.group_purchase_manager",
+            company_id=self.company.id, company_ids=[Command.set(self.company.ids)],
+        )
+        order = self.purchase()
+        order.button_confirm()
+        self.assertEqual(order.state, "to approve")
+        self.assertFalse(order.picking_ids)
+        self.vendor.ref = False
+        with self.assertRaisesRegex(UserError, "vendor"), self.cr.savepoint():
+            order.with_user(manager).button_approve()
+        self.assertEqual(order.state, "to approve")
+        self.assertFalse(order.picking_ids)
+        self.vendor.ref = "CAT-V001"
+        order.with_user(manager).button_approve()
+        self.assertEqual(order.state, "purchase")
+        self.assertTrue(order.picking_ids)
+
+    def test_purchase_lock_unlock_and_done_preserve_standard_confirmed_flow(self):
+        self.enable_policy()
+        self.company.po_lock = "lock"
+        order = self.purchase()
+        order.button_confirm()
+        self.assertEqual(order.state, "done")
+        self.assertTrue(order.picking_ids)
+        order.button_unlock()
+        self.assertEqual(order.state, "purchase")
+        order.button_done()
+        self.assertEqual(order.state, "done")
+        self.vendor.ref = False
+        with self.assertRaisesRegex(UserError, "vendor"), self.cr.savepoint():
+            order.button_unlock()
+        self.assertEqual(order.state, "done")
+
+    def test_purchase_unlock_and_done_cannot_confirm_a_draft(self):
+        self.enable_policy()
+        order = self.purchase()
+        for method in ("button_unlock", "button_done"):
+            with self.subTest(method=method), self.assertRaises(UserError), self.cr.savepoint():
+                getattr(order, method)()
+        self.assertEqual(order.state, "draft")
+        self.assertFalse(order.picking_ids)
+
+    def test_disabled_purchase_policy_preserves_native_state_and_approve_paths(self):
+        self.enable_policy()
+        self.company.portfolio_masterdata_enabled = False
+        self.vendor.ref = False
+        created = self.purchase(state="purchase")
+        self.assertEqual(created.state, "purchase")
+        order = self.purchase()
+        order.write({"state": "purchase"})
+        order.button_done()
+        order.button_unlock()
+        self.assertEqual(order.state, "purchase")
+        approved = self.purchase()
+        approved.button_approve()
+        self.assertEqual(approved.state, "purchase")
+        self.assertTrue(approved.picking_ids)

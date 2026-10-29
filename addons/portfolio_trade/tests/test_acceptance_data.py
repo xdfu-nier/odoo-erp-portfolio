@@ -1,6 +1,7 @@
 import importlib
 import importlib.util
 import secrets
+from types import SimpleNamespace
 
 from odoo import Command
 from odoo.exceptions import AccessError, UserError
@@ -164,3 +165,81 @@ class TestAcceptanceData(TransactionCase):
     def test_fixture_requires_explicit_opt_in(self):
         with self.assertRaisesRegex(UserError, "opt.in"):
             self.prepare(allow_local=False)
+
+    def test_api_defaults_to_no_local_opt_in(self):
+        module = importlib.import_module("odoo.addons.portfolio_trade.acceptance_data")
+        with self.assertRaisesRegex(UserError, "opt.in"), self.cr.savepoint():
+            module.prepare_acceptance(self.env, {key: secrets.token_urlsafe(24) for key in ROLES})
+
+    def _target_proxy(self, database, host):
+        actual = self.env
+
+        class TargetEnvironment:
+            cr = SimpleNamespace(
+                dbname=database, _cnx=SimpleNamespace(info=SimpleNamespace(host=host)),
+                savepoint=actual.cr.savepoint, execute=actual.cr.execute,
+            )
+            user = actual.user
+
+            def __call__(self, **kwargs):
+                return actual(**kwargs)
+
+        return TargetEnvironment()
+
+    def _assert_target_rejected(self, database, host):
+        module = importlib.import_module("odoo.addons.portfolio_trade.acceptance_data")
+        with self.assertRaisesRegex(UserError, "local|database|host"), self.cr.savepoint():
+            module.prepare_acceptance(
+                self._target_proxy(database, host), {key: secrets.token_urlsafe(24) for key in ROLES},
+                allow_local=True,
+            )
+        self.assertFalse(self.env["ir.model.data"].search([("module", "=", NAMESPACE)]))
+
+    def test_api_rejects_unapproved_actual_database(self):
+        self._assert_target_rejected("production", "127.0.0.1")
+
+    def test_api_rejects_actual_remote_host_despite_local_developer_config(self):
+        self._assert_target_rejected("odoo_portfolio_m1_test", "remote.example")
+
+    def test_api_fails_closed_when_actual_host_is_unavailable(self):
+        self._assert_target_rejected("odoo_portfolio_m1_test", None)
+
+    def _assert_missing_identity_rejected(self, key, values):
+        self.prepare()
+        record = self.owned(key)
+        record.write(values)
+        self.env["ir.model.data"].search([("module", "=", NAMESPACE), ("name", "=", key)]).unlink()
+        counts = {
+            name: self.env[name].with_context(active_test=False).search_count([])
+            for name in ("res.company", "res.users", "product.product", "stock.move")
+        }
+        identities = {
+            (item.name, item.model, item.res_id)
+            for item in self.env["ir.model.data"].search([("module", "=", NAMESPACE)])
+        }
+        before_companies = self.env.user.company_ids
+        with self.assertRaisesRegex(UserError, "identity|incomplete|conflict"), self.cr.savepoint():
+            self.prepare()
+        self.assertEqual(counts, {
+            name: self.env[name].with_context(active_test=False).search_count([]) for name in counts
+        })
+        self.assertEqual(identities, {
+            (item.name, item.model, item.res_id)
+            for item in self.env["ir.model.data"].search([("module", "=", NAMESPACE)])
+        })
+        self.assertEqual(self.env.user.company_ids, before_companies)
+        for field, expected in values.items():
+            self.assertEqual(record[field], expected)
+
+    def test_missing_renamed_company_identity_cannot_create_replacement(self):
+        self._assert_missing_identity_rejected("company_b", {"name": "User renamed PARTS-B"})
+
+    def test_missing_renamed_product_identity_cannot_create_replacement(self):
+        self._assert_missing_identity_rejected("product_sensor", {
+            "name": "User renamed sensor", "default_code": "USER-SENSOR",
+        })
+
+    def test_missing_renamed_user_identity_cannot_create_replacement(self):
+        self._assert_missing_identity_rejected("user_sales", {
+            "name": "User renamed salesperson", "login": "user.renamed.acceptance.sales",
+        })

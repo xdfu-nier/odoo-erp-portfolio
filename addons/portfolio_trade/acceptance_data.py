@@ -15,6 +15,24 @@ ROLE_GROUPS = {
     "finance": "account.group_account_invoice",
     "other_sales": "sales_team.group_sale_salesman",
 }
+EXPECTED_IDENTITIES = {
+    "company_a": "res.company", "company_b": "res.company", "warehouse_a": "stock.warehouse",
+    "customer": "res.partner", "vendor": "res.partner", "initial_bearing_move": "stock.move",
+    **{f"user_{role}": "res.users" for role in ROLE_GROUPS},
+    **{f"product_{key}": "product.product" for key in ("bearing", "sensor", "bolt")},
+    **{f"supplier_{key}": "product.supplierinfo" for key in ("bearing", "sensor", "bolt")},
+}
+
+
+def _validate_local_target(env):
+    # Inspect the live psycopg connection, not caller context or mutable global
+    # configuration. Never stringify connection metadata: it can contain secrets.
+    try:
+        database, host = env.cr.dbname, env.cr._cnx.info.host
+    except (AttributeError, TypeError, ValueError):
+        raise UserError(_("Cannot verify the actual local acceptance database host.")) from None
+    if database not in {"odoo_portfolio", "odoo_portfolio_m1_test"} or host != "127.0.0.1":
+        raise UserError(_("Acceptance preparation requires an approved local database and loopback host."))
 
 
 class _Profile:
@@ -46,16 +64,17 @@ class _Profile:
         return self.own(key, self.env[model].create(values))
 
 
-def prepare_acceptance(env, passwords_by_role, allow_local=True):
+def prepare_acceptance(env, passwords_by_role, allow_local=False):
     """Create the fake profile once, preserving all known records on reruns.
 
-    The CLI separately verifies host/database. Direct developer callers explicitly
-    invoke this function and must supply the local opt-in and private credentials.
+    Both this API and the CLI verify their target. Direct developer callers must
+    supply the local opt-in and private credentials.
     The transaction belongs to the caller; a failed preparation rolls back its
     entire savepoint, and this function never commits or returns credentials.
     """
     if allow_local is not True:
         raise UserError(_("Acceptance preparation requires explicit local opt-in."))
+    _validate_local_target(env)
     if not env.user.has_group("base.group_system"):
         raise AccessError(_("Only settings administrators can prepare acceptance data."))
     if (
@@ -75,9 +94,20 @@ def prepare_acceptance(env, passwords_by_role, allow_local=True):
 
 def _prepare(env, passwords_by_role):
     profile = _Profile(env)
-    established = bool(profile.marker("company_a"))
-    if established and not profile.marker("initial_bearing_move"):
-        raise UserError(_("Acceptance inventory evidence is missing; refusing a second inventory adjustment."))
+    markers = env["ir.model.data"].search([("module", "=", NAMESPACE)])
+    established = bool(markers)
+    if established:
+        by_name = {item.name: item for item in markers}
+        if "initial_bearing_move" not in by_name:
+            raise UserError(_("Acceptance inventory evidence is missing; refusing a second inventory adjustment."))
+        # Validate the complete profile before creating companies, granting access
+        # or changing reference data. Missing identities are never replacements.
+        for key, model in EXPECTED_IDENTITIES.items():
+            marker = by_name.get(key)
+            if not marker or marker.model != model or not env[model].browse(marker.res_id).exists():
+                if key in ("initial_bearing_move", "warehouse_a"):
+                    raise UserError(_("Acceptance inventory identity is missing or invalid."))
+                raise UserError(_("Acceptance profile identity conflict: %(key)s is missing or invalid.", key=key))
     currency = env.ref("base.CNY")
     if not established and not currency.active:
         # This standard currency is reference data, not unknown business data.
