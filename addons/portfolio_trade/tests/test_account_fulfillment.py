@@ -235,3 +235,53 @@ class TestAccountFulfillment(FulfillmentLedgerCommon):
         self.assertEqual(invoice.amount_untaxed, 255)
         with self.assertRaises(AccessError):
             invoice.with_user(self.sales).sudo().button_draft()
+
+    def empty_invoice(self):
+        return self.env["account.move"].with_user(self.billing).with_company(self.company).create(
+            self.invoice_values(0, invoice_line_ids=[]),
+        )
+
+    def test_nested_link_cannot_steal_product_line_from_posted_invoice(self):
+        self.invoice.action_post()
+        target = self.empty_invoice()
+        with self.env.cr.savepoint():
+            before = self.accounting_snapshot()
+            with unittest.TestCase.assertRaises(self, UserError):
+                target.with_context(check_move_validity=False, skip_readonly_check=True).write({
+                    "line_ids": [Command.link(self.invoice.invoice_line_ids.id)],
+                })
+            self.assertEqual(self.accounting_snapshot(), before)
+
+    def test_nested_set_cannot_empty_posted_parent_by_stealing_all_lines(self):
+        self.invoice.action_post()
+        target = self.empty_invoice()
+        with self.env.cr.savepoint():
+            before = self.accounting_snapshot()
+            with unittest.TestCase.assertRaises(self, UserError):
+                target.with_context(check_move_validity=False, skip_readonly_check=True).write({
+                    "line_ids": [Command.set(self.invoice.line_ids.ids)],
+                })
+            self.assertEqual(self.accounting_snapshot(), before)
+
+    def test_nested_clear_cannot_abandon_draft_sales_source(self):
+        with self.env.cr.savepoint():
+            before = self.accounting_snapshot()
+            with unittest.TestCase.assertRaises(self, UserError):
+                self.invoice.write({"invoice_line_ids": [Command.update(
+                    self.invoice.invoice_line_ids.id, {"sale_line_ids": [Command.clear()]},
+                )]})
+            self.assertEqual(self.accounting_snapshot(), before)
+
+    def test_inverse_invoice_relation_default_cannot_attach_posted_line(self):
+        self.invoice.action_post()
+        order = self.make_sale(quantity=1, confirm=False)
+        with self.env.cr.savepoint():
+            before = self.accounting_snapshot()
+            with unittest.TestCase.assertRaises(self, UserError):
+                self.env["sale.order.line"].with_user(self.sales).sudo().with_context(
+                    default_invoice_lines=[Command.set(self.invoice.invoice_line_ids.ids)],
+                ).create({
+                    "order_id": order.id, "product_id": self.product.id, "product_uom_qty": 1,
+                    "price_unit": 100, "tax_id": [Command.clear()],
+                })
+            self.assertEqual(self.accounting_snapshot(), before)

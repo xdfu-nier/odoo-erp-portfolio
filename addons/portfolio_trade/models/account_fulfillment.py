@@ -119,12 +119,79 @@ def _preflight(records, values_list, creating=False):
                 for command in effective.get(name) or []:
                     if command[0] in (0, 1) and _supplied(line_model, command[2], RAW_LINE, command[0] == 0):
                         raise UserError(env._("Invoice line amounts must be computed by native accounting."))
+                    linked = line_model.browse(
+                        command[2] if command[0] == 6 else [command[1]] if command[0] in (1, 2, 3, 4) else [],
+                    ).sudo()
+                    if linked.filtered(lambda line: line.move_id.state == "posted"):
+                        raise UserError(env._("Posted invoice lines cannot be edited or moved through another invoice."))
+                    if command[0] == 1 and "sale_line_ids" in command[2] and linked.sale_line_ids:
+                        if not _resulting_ids(linked.sale_line_ids.ids, command[2]["sale_line_ids"]):
+                            raise UserError(env._("Retain the sales source on a draft invoice line, or delete the claim."))
         if not creating:
             moves = records if records._name == "account.move" else records.sudo().move_id
             facts = MOVE_FACTS if records._name == "account.move" else LINE_FACTS
             if facts.intersection(values) and moves.filtered(lambda move: move.state == "posted"):
                 if not (set(values) <= {"state"} and permits_state(moves, values.get("state"))):
                     raise UserError(env._("Posted sales invoice facts are immutable; reset through the native action."))
+
+
+def _resulting_ids(current_ids, commands):
+    ids = set(current_ids)
+    for command in commands or []:
+        if command[0] == 6:
+            ids = set(command[2])
+        elif command[0] == 5:
+            ids.clear()
+        elif command[0] == 4:
+            ids.add(command[1])
+        elif command[0] in (2, 3):
+            ids.discard(command[1])
+    return ids
+
+
+def _pricing_key(entry, source, original):
+    return (
+        original.id, source.id, entry.product_id.id, entry.product_uom_id.id,
+        entry.price_unit, entry.discount, tuple(sorted(entry.tax_ids.ids)), entry.currency_id.id,
+    )
+
+
+def _validate_credit_budgets(sources, financial, physical):
+    """Both gross budgets and each original pricing group reserve draft claims."""
+    env = sources.env
+    credits = env["account.move.line"].sudo().search([
+        ("sale_line_ids", "in", sources.ids), ("display_type", "=", "product"),
+        ("move_id.move_type", "=", "out_refund"), ("move_id.state", "!=", "cancel"),
+    ])
+    billed = {}
+    claimed = {}
+    physical_sources = sources.filtered(lambda source: source.id in financial)
+    for source in physical_sources:
+        facts = financial[source.id]
+        if float_compare(facts["credit_reserved"], physical[source.id]["returned"], precision_rounding=source.product_uom.rounding) > 0:
+            raise UserError(env._("Credit quantities exceed completed, uncredited customer returns."))
+        for original in facts["originals"].values():
+            if float_compare(original["credit_reserved"], original["invoice_posted"], precision_rounding=source.product_uom.rounding) > 0:
+                raise UserError(env._("Credit quantities exceed the selected original posted invoice."))
+    for original in credits.move_id.reversed_entry_id:
+        for entry in original.invoice_line_ids.filtered(lambda line: line.display_type == "product"):
+            for source in entry.sale_line_ids & physical_sources:
+                key = _pricing_key(entry, source, original)
+                billed[key] = billed.get(key, 0) + entry.product_uom_id._compute_quantity(entry.quantity, source.product_uom, round=False)
+    for entry in credits:
+        original = entry.move_id.reversed_entry_id
+        if (
+            original.state != "posted" or original.move_type != "out_invoice"
+            or entry.move_id.company_id != original.company_id
+            or entry.move_id.currency_id != original.currency_id
+            or entry.currency_id != entry.move_id.currency_id
+        ):
+            raise UserError(env._("A credit requires its original posted customer invoice in the same company and currency."))
+        for source in entry.sale_line_ids & physical_sources:
+            key = _pricing_key(entry, source, original)
+            claimed[key] = claimed.get(key, 0) + entry.product_uom_id._compute_quantity(entry.quantity, source.product_uom, round=False)
+            if key not in billed or float_compare(claimed[key], billed[key], precision_rounding=source.product_uom.rounding) > 0:
+                raise UserError(env._("Credit quantity and pricing must remain attributable to the original invoice lines."))
 
 
 def _quantities(moves):
@@ -144,7 +211,7 @@ def _validate(moves, sources, before=None, posting=False):
         return
     # Counterpart/tax synchronization must have finished before any final check.
     moves.env.flush_all()
-    affected = moves.sudo().filtered(lambda move: move.line_ids.sale_line_ids & protected)
+    affected = moves.sudo().filtered(lambda move: move.state != "cancel" and move.line_ids.sale_line_ids & protected)
     for move in affected:
         if move.move_type not in ("out_invoice", "out_refund"):
             raise UserError(env._("Controlled sales sources require customer invoices or credit notes."))
@@ -152,7 +219,8 @@ def _validate(moves, sources, before=None, posting=False):
             raise UserError(env._("Controlled fulfillment invoices currently require the company currency."))
         for entry in move.invoice_line_ids.filtered(lambda line: line.display_type == "product"):
             linked = entry.sale_line_ids
-            if len(linked) != 1 or linked.company_id != move.company_id or entry.company_id != move.company_id:
+            if (len(linked) != 1 or linked.company_id != move.company_id or entry.company_id != move.company_id
+                or entry.currency_id != move.currency_id):
                 raise UserError(env._("Each invoice product line requires one consistent sales source."))
             if (
                 entry.product_id != linked.product_id or not entry.product_uom_id
@@ -176,6 +244,9 @@ def _validate(moves, sources, before=None, posting=False):
                 raise UserError(env._("Sales invoice amounts must match their native quantity, price and taxes."))
     financial = financial_facts(protected.with_env(moves.env))
     physical = physical_facts(protected.with_env(moves.env))
+    if any(facts["invalid_line_ids"] for facts in financial.values()):
+        raise UserError(env._("Malformed active invoice facts prevent granting a financial allowance."))
+    _validate_credit_budgets(protected.with_env(moves.env), financial, physical)
     normal = affected.filtered(lambda move: move.move_type == "out_invoice")
     now = _quantities(normal)
     posting_sources = normal.invoice_line_ids.sale_line_ids.ids if posting else []
@@ -188,8 +259,6 @@ def _validate(moves, sources, before=None, posting=False):
         if source.id not in financial:
             continue  # Native service invoices have no physical quota.
         facts = financial[source.id]
-        if facts["invalid_line_ids"]:
-            raise UserError(env._("Malformed active invoice facts prevent granting a financial allowance."))
         if source.id in increased or source.id in posting_sources:
             net = physical[source.id]["delivered"] - physical[source.id]["returned"]
             if float_compare(facts["signed_reserved"], net, precision_rounding=source.product_uom.rounding) > 0:
@@ -226,7 +295,8 @@ class AccountMove(models.Model):
                 moves = super().create(vals_list)
                 frame.include_created_parents(moves)
                 _validate(moves, sources)
-                return moves
+            include_account_parents(moves)
+            return moves
 
     def write(self, values):
         if native_frame(self.env, self):
@@ -240,11 +310,47 @@ class AccountMove(models.Model):
         _preflight(self, [values])
         with self.env.cr.savepoint():
             lock_financial(sources, extra_companies=companies)
-            before = _quantities(self)
+            before = _quantities(related | self)
             with accounting_frame(self.env, companies, related):
                 result = super().write(values)
-                _validate(self, sources, before=before)
+                _validate(related | self, sources, before=before)
                 return result
+
+    def copy_data(self, default=None):
+        # Native reversal/copy prepares semantic invoice input. Copied writable
+        # computed values must be recomputed, never interpreted as public input.
+        values_list = super().copy_data(default=default)
+        for move, values in zip(self, values_list):
+            if not _protected(move.sudo().line_ids.sale_line_ids):
+                continue
+            if RAW_MOVE.intersection(default or {}):
+                raise UserError(self.env._("Explicit copied invoice amounts must still be computed by native accounting."))
+            for name in ("line_ids", "invoice_line_ids"):
+                for command in (default or {}).get(name) or []:
+                    if command[0] in (0, 1) and RAW_LINE.intersection(command[2]):
+                        raise UserError(self.env._("Explicit copied line amounts must still be computed by native accounting."))
+            for name in RAW_MOVE:
+                values.pop(name, None)
+            for name in ("line_ids", "invoice_line_ids"):
+                for command in values.get(name) or []:
+                    if command[0] == 0:
+                        for field in RAW_LINE:
+                            command[2].pop(field, None)
+        return values_list
+
+    def _reverse_moves(self, default_values_list=None, cancel=False):
+        sources, related, companies = _scope(self)
+        if not _protected(sources):
+            return super()._reverse_moves(default_values_list=default_values_list, cancel=cancel)
+        require_billing(self.env, companies)
+        with self.env.cr.savepoint():
+            lock_financial(sources, extra_companies=companies)
+            before = _quantities(related)
+            with accounting_frame(self.env, companies, related, new_moves=len(self)) as frame:
+                reverse = super()._reverse_moves(default_values_list=default_values_list, cancel=cancel)
+                frame.include_created_parents(reverse)
+                _validate(related | reverse, sources, before=before)
+                return reverse
 
     def unlink(self):
         sources, related, companies = _scope(self)
@@ -304,7 +410,10 @@ class AccountMoveLine(models.Model):
             return super().write(values)
         require_billing(self.env, companies)
         _preflight(self, [values])
-        if "sale_line_ids" in values and not _relation_ids(values["sale_line_ids"]):
+        if "sale_line_ids" in values and any(
+            entry.sale_line_ids and not _resulting_ids(entry.sale_line_ids.ids, values["sale_line_ids"])
+            for entry in self.sudo()
+        ):
             raise UserError(_("Retain the sales source on an invoice line; delete a draft claim to release it."))
         with self.env.cr.savepoint():
             lock_financial(sources, extra_companies=companies)
@@ -328,3 +437,24 @@ class AccountMoveLine(models.Model):
             lock_financial(sources, extra_companies=companies)
             with accounting_frame(self.env, companies, related):
                 return super().unlink()
+
+
+class AccountMoveReversal(models.TransientModel):
+    _inherit = "account.move.reversal"
+
+    def _prepare_default_reversal(self, move):
+        values = super()._prepare_default_reversal(move)
+        if _protected(move.sudo().line_ids.sale_line_ids):
+            # Native CNY reversal preparation copies this computed field; let
+            # native company-currency computation derive it on the new draft.
+            values.pop("invoice_currency_rate", None)
+        return values
+
+    def reverse_moves(self, is_modify=False):
+        sources, _related, companies = _scope(self.move_ids)
+        if not _protected(sources):
+            return super().reverse_moves(is_modify=is_modify)
+        require_billing(self.env, companies)
+        with self.env.cr.savepoint():
+            lock_financial(sources, extra_companies=companies)
+            return super().reverse_moves(is_modify=is_modify)

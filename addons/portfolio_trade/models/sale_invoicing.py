@@ -34,7 +34,7 @@ class SaleOrderLine(models.Model):
             if controlled(order.sudo().company_id):
                 supplied = COUNTERS.intersection(values) | COUNTERS.intersection(configured)
                 supplied |= {name for name in COUNTERS if f"default_{name}" in self.env.context}
-                if supplied or "invoice_lines" in values:
+                if supplied or "invoice_lines" in values or "invoice_lines" in configured or "default_invoice_lines" in self.env.context:
                     raise UserError(_("Invoice quantities, status and links are derived from native accounting."))
         return super().create(vals_list)
 

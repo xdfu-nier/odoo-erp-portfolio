@@ -4,6 +4,7 @@ from . import test_fulfillment_ledger as test_fulfillment_ledger
 from . import test_master_data as test_master_data
 from . import test_procurement_provenance as test_procurement_provenance
 from . import test_procurement_provenance_concurrency as test_procurement_provenance_concurrency
+from . import test_return_credit as test_return_credit
 from . import test_sale_approval as test_sale_approval
 from . import test_sale_approval_concurrency as test_sale_approval_concurrency
 from . import test_stock_fulfillment as test_stock_fulfillment

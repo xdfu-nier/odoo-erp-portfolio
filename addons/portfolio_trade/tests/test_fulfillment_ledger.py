@@ -223,7 +223,8 @@ class TestFulfillmentLedger(FulfillmentLedgerCommon):
 
     def test_return_is_physical_even_when_native_to_refund_counter_flag_is_false(self):
         physical_facts = self.api("physical_facts")
-        self.make_return(to_refund=False)
+        with self.legacy_fixture():
+            self.make_return(to_refund=False)
         self.assertEqual(physical_facts(self.line)[self.line.id]["returned"], 10)
 
     def test_presentation_accrual_date_cannot_hide_done_return(self):
