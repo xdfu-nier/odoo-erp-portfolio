@@ -1,6 +1,7 @@
 """Authoritative native stock/account quantities, without financial ORM guards."""
 import importlib
 import unittest
+from contextlib import contextmanager
 
 from odoo import Command, fields
 from odoo.addons.account.tests.common import AccountTestInvoicingCommon
@@ -8,8 +9,7 @@ from odoo.exceptions import AccessError, UserError
 from odoo.tests import new_test_user, tagged
 
 
-@tagged("post_install", "-at_install", "portfolio_ledger")
-class TestFulfillmentLedger(AccountTestInvoicingCommon):
+class FulfillmentLedgerCommon(AccountTestInvoicingCommon):
     chart_template = "generic_coa"
 
     @classmethod
@@ -183,6 +183,20 @@ class TestFulfillmentLedger(AccountTestInvoicingCommon):
         self.company.invalidate_recordset(["portfolio_stock_revision"])
         self.assertEqual(self.company.portfolio_stock_revision, before)
 
+    @contextmanager
+    def legacy_fixture(self):
+        """Prepare explicitly pre-policy defects, then read facts with policy on."""
+        company = self.company.with_user(self.settings_only)
+        enabled = company.portfolio_fulfillment_enabled
+        company.write({"portfolio_fulfillment_enabled": False})
+        try:
+            yield
+        finally:
+            company.write({"portfolio_fulfillment_enabled": enabled})
+
+
+@tagged("post_install", "-at_install", "portfolio_ledger")
+class TestFulfillmentLedger(FulfillmentLedgerCommon):
     def test_native_cny_approved_partial_fixture_and_gross_physical_facts(self):
         physical_facts = self.api("physical_facts")
         self.assertEqual(self.company.currency_id, self.env.ref("base.CNY"))
@@ -327,11 +341,13 @@ class TestFulfillmentLedger(AccountTestInvoicingCommon):
 
     def test_credit_exposes_draft_or_cancelled_original_consistency(self):
         financial_facts = self.api("financial_facts")
-        credit = self.make_invoice(1, original=self.invoice)
+        with self.legacy_fixture():
+            credit = self.make_invoice(1, original=self.invoice)
         facts = financial_facts(self.line)[self.line.id]
         self.assertEqual(facts["originals"][self.invoice.id]["state"], "draft")
         self.assertIn(credit.invoice_line_ids.id, facts["invalid_line_ids"])
-        self.invoice.button_cancel()
+        with self.legacy_fixture():
+            self.invoice.button_cancel()
         facts = financial_facts(self.line)[self.line.id]
         self.assertEqual(facts["originals"][self.invoice.id]["state"], "cancel")
         self.assertEqual(facts["originals"][self.invoice.id]["invoice_posted"], 0)
@@ -340,9 +356,10 @@ class TestFulfillmentLedger(AccountTestInvoicingCommon):
     def test_credit_against_other_source_has_no_original_invoice_budget(self):
         financial_facts = self.api("financial_facts")
         other = self.make_sale(quantity=1).order_line.with_user(self.billing)
-        original = self.make_invoice(1, line=other)
-        original.action_post()
-        credit = self.make_invoice(1, original=original)
+        with self.legacy_fixture():
+            original = self.make_invoice(1, line=other)
+            original.action_post()
+            credit = self.make_invoice(1, original=original)
         facts = financial_facts(self.line)[self.line.id]
         self.assertEqual(facts["originals"][original.id]["invoice_posted"], 0)
         self.assertIn(credit.invoice_line_ids.id, facts["invalid_line_ids"])
@@ -360,9 +377,12 @@ class TestFulfillmentLedger(AccountTestInvoicingCommon):
     def test_multi_source_invoice_keeps_distinct_product_lines(self):
         financial_facts = self.api("financial_facts")
         self.invoice.button_cancel()
-        other = self.make_sale(quantity=2).order_line.with_user(self.billing)
+        other_order = self.make_sale(quantity=2)
+        self.validate(self.receipt_backorder, 2)
+        self.validate(other_order.picking_ids, 2)
+        other = other_order.order_line.with_user(self.billing)
         invoice = self.make_invoice(3)
-        data = invoice.invoice_line_ids.copy_data({"quantity": 2, "sale_line_ids": [Command.set(other.ids)]})[0]
+        data = other._prepare_invoice_line(quantity=2)
         invoice.write({"invoice_line_ids": [Command.create(data)]})
         lines = self.line | other
         facts = financial_facts(lines)
@@ -374,7 +394,8 @@ class TestFulfillmentLedger(AccountTestInvoicingCommon):
         self.invoice.button_cancel()
         other = self.make_sale(quantity=2).order_line.with_user(self.billing)
         invoice = self.make_invoice(5)
-        invoice.invoice_line_ids.write({"sale_line_ids": [Command.set((self.line | other).ids)]})
+        with self.legacy_fixture():
+            invoice.invoice_line_ids.write({"sale_line_ids": [Command.set((self.line | other).ids)]})
         facts = financial_facts(self.line | other)
         for line in self.line | other:
             self.assertEqual(facts[line.id]["invoice_reserved"], 0)
@@ -384,8 +405,9 @@ class TestFulfillmentLedger(AccountTestInvoicingCommon):
         financial_facts = self.api("financial_facts")
         self.invoice.button_cancel()
         product = self.env["product.product"].create({"name": "Wrong invoice item", "type": "consu"})
-        invoice = self.make_invoice(999)
-        invoice.invoice_line_ids.write({"product_id": product.id, "tax_ids": [Command.clear()]})
+        with self.legacy_fixture():
+            invoice = self.make_invoice(999)
+            invoice.invoice_line_ids.write({"product_id": product.id, "tax_ids": [Command.clear()]})
         facts = financial_facts(self.line)[self.line.id]
         self.assertEqual(facts["invoice_reserved"], 0)
         self.assertIn(invoice.invoice_line_ids.id, facts["invalid_line_ids"])
@@ -398,7 +420,8 @@ class TestFulfillmentLedger(AccountTestInvoicingCommon):
         second = self.make_invoice(65)
         (first | second).action_post()
         self.make_return()
-        self.make_invoice(6, original=first)
+        with self.legacy_fixture():
+            self.make_invoice(6, original=first)
         facts = financial_facts(self.line)[self.line.id]
         self.assertEqual(physical_facts(self.line)[self.line.id]["returned"] - facts["credit_reserved"], 4)
         budget = facts["originals"][first.id]
@@ -458,7 +481,8 @@ class TestFulfillmentLedger(AccountTestInvoicingCommon):
     def test_cross_company_account_identity_is_authorized_before_source_lock(self):
         lock_financial = self.api("lock_financial")
         financial_facts = self.api("financial_facts")
-        invoice = self.make_invoice(9, company=self.other_company)
+        with self.legacy_fixture():
+            invoice = self.make_invoice(9, company=self.other_company)
         facts = financial_facts(self.line)[self.line.id]
         self.assertEqual(facts["invoice_reserved"], 70)
         self.assertIn(invoice.invoice_line_ids.id, facts["invalid_line_ids"])
