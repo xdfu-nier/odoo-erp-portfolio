@@ -44,10 +44,19 @@ class PurchaseOrder(models.Model):
         return super().create(values_list)
 
     def write(self, values):
-        if values.get("state") not in _PROMOTED_STATES:
+        if values.get("state") not in _PROMOTED_STATES and "company_id" not in values:
             return super().write(values)
         extra = self.env["res.company"].browse(values.get("company_id", []))
         self._portfolio_masterdata_lock(extra)
+        if "company_id" in values:
+            for order in self:
+                if (
+                    order.company_id.id != values["company_id"] and order.state in _PROMOTED_STATES
+                    and (order.company_id.portfolio_masterdata_enabled or extra.portfolio_masterdata_enabled)
+                ):
+                    raise UserError(_("Change the purchase company on a draft quotation before confirmation."))
+        if values.get("state") not in _PROMOTED_STATES:
+            return super().write(values)
         controlled = self.filtered(lambda order: order.company_id.portfolio_masterdata_enabled)
         if extra.portfolio_masterdata_enabled:
             controlled = self

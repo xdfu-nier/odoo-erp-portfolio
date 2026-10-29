@@ -219,6 +219,13 @@ class SaleOrder(models.Model):
                 lines.check_access("write")
                 affected |= lines.order_id
         affected._portfolio_lock(extra)
+        if "company_id" in values:
+            for order in self:
+                if (
+                    order.company_id.id != values["company_id"] and order.state == "sale"
+                    and (order.company_id.portfolio_masterdata_enabled or extra.portfolio_masterdata_enabled)
+                ):
+                    raise UserError(_("Change the sales company on a draft quotation before confirmation."))
         if ORDER_COMMERCIAL.intersection(values):
             self._portfolio_mutable(extra)
             self._portfolio_invalidate()

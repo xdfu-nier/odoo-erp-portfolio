@@ -409,3 +409,139 @@ class TestMasterData(TransactionCase):
         approved.button_approve()
         self.assertEqual(approved.state, "purchase")
         self.assertTrue(approved.picking_ids)
+
+    def test_purchase_company_transfer_cannot_import_unvalidated_confirmed_state(self):
+        self.enable_policy()
+        self.assertFalse(self.other_company.portfolio_masterdata_enabled)
+        buyer = new_test_user(
+            self.env, login="catalog_multicompany_buyer", groups="purchase.group_purchase_user",
+            company_id=self.other_company.id,
+            company_ids=[Command.set((self.company | self.other_company).ids)],
+        )
+        vendor = self.env["res.partner"].create({"name": "Shared incomplete transfer vendor", "ref": False})
+        service = self.env["product.product"].create({
+            "name": "Shared incomplete transfer service", "type": "service", "default_code": False,
+        })
+        warehouse_a = self.env["stock.warehouse"].search([("company_id", "=", self.company.id)], limit=1)
+        warehouse_b = self.env["stock.warehouse"].search([("company_id", "=", self.other_company.id)], limit=1)
+        self.assertTrue(warehouse_a.in_type_id)
+        self.assertTrue(warehouse_b.in_type_id)
+        order = self.env["purchase.order"].with_user(buyer).with_context(
+            allowed_company_ids=[self.other_company.id, self.company.id],
+        ).create({
+            "partner_id": vendor.id, "company_id": self.other_company.id,
+            "picking_type_id": warehouse_b.in_type_id.id, "state": "purchase",
+            "order_line": [Command.create({
+                "product_id": service.id, "product_qty": 1, "price_unit": 1,
+                "product_uom": service.uom_po_id.id, "date_planned": fields.Datetime.now(),
+                "taxes_id": [Command.clear()],
+            })],
+        })
+        self.assertEqual(order.state, "purchase")
+        self.assertEqual(order.company_id, self.other_company)
+        self.assertFalse(order.picking_ids)
+        move_count = self.env["stock.move"].search_count([("product_id", "=", service.id)])
+        with self.assertRaises(UserError), self.cr.savepoint():
+            order.with_company(self.company).write({
+                "company_id": self.company.id, "picking_type_id": warehouse_a.in_type_id.id,
+            })
+        self.assertEqual(order.company_id, self.other_company)
+        self.assertEqual(order.picking_type_id, warehouse_b.in_type_id)
+        self.assertEqual(order.state, "purchase")
+        self.assertFalse(order.picking_ids)
+        self.assertEqual(self.env["stock.move"].search_count([("product_id", "=", service.id)]), move_count)
+
+    def test_sale_company_transfer_cannot_import_unvalidated_confirmed_state(self):
+        self.enable_policy(approval=False)
+        self.assertFalse(self.company.portfolio_approval_enabled)
+        self.assertFalse(self.other_company.portfolio_approval_enabled)
+        self.assertFalse(self.other_company.portfolio_masterdata_enabled)
+        salesperson = new_test_user(
+            self.env, login="catalog_multicompany_sales", groups="sales_team.group_sale_salesman",
+            company_id=self.other_company.id,
+            company_ids=[Command.set((self.company | self.other_company).ids)],
+        )
+        customer = self.env["res.partner"].create({"name": "Shared incomplete transfer customer", "ref": False})
+        service = self.env["product.product"].create({
+            "name": "Shared incomplete sales transfer service", "type": "service", "default_code": False,
+        })
+        warehouse_a = self.env["stock.warehouse"].search([("company_id", "=", self.company.id)], limit=1)
+        warehouse_b = self.env["stock.warehouse"].search([("company_id", "=", self.other_company.id)], limit=1)
+        self.assertTrue(warehouse_a)
+        self.assertTrue(warehouse_b)
+        order = self.env["sale.order"].with_user(salesperson).with_context(
+            allowed_company_ids=[self.other_company.id, self.company.id],
+        ).create({
+            "partner_id": customer.id, "user_id": salesperson.id,
+            "company_id": self.other_company.id, "warehouse_id": warehouse_b.id,
+            "order_line": [Command.create({
+                "product_id": service.id, "product_uom_qty": 1, "price_unit": 1,
+                "tax_id": [Command.clear()],
+            })],
+        })
+        order.action_confirm()
+        self.assertEqual(order.state, "sale")
+        self.assertEqual(order.company_id, self.other_company)
+        self.assertFalse(order.picking_ids)
+        revision = order.portfolio_revision
+        with self.assertRaises(UserError), self.cr.savepoint():
+            order.with_company(self.company).write({
+                "company_id": self.company.id, "warehouse_id": warehouse_a.id,
+            })
+        self.assertEqual(order.company_id, self.other_company)
+        self.assertEqual(order.warehouse_id, warehouse_b)
+        self.assertEqual(order.state, "sale")
+        self.assertEqual(order.portfolio_revision, revision)
+        self.assertFalse(order.picking_ids)
+
+    def test_draft_company_changes_remain_supported_with_master_data_policy(self):
+        self.enable_policy(approval=False)
+        for user in (self.sales, self.buyer):
+            user.write({"company_ids": [Command.link(self.other_company.id)]})
+        scope = {"allowed_company_ids": (self.company | self.other_company).ids}
+        sale, purchase = self.sale().with_context(**scope), self.purchase().with_context(**scope)
+        for company in (self.other_company, self.company):
+            warehouse = self.env["stock.warehouse"].search([("company_id", "=", company.id)], limit=1)
+            sale.with_company(company).write({"company_id": company.id, "warehouse_id": warehouse.id})
+            purchase.with_company(company).write({"company_id": company.id, "picking_type_id": warehouse.in_type_id.id})
+            self.assertEqual(sale.company_id, company)
+            self.assertEqual(purchase.company_id, company)
+            self.assertEqual(sale.state, "draft")
+            self.assertEqual(purchase.state, "draft")
+            self.assertFalse(sale.picking_ids | purchase.picking_ids)
+
+    def test_disabled_confirmed_company_changes_preserve_native_behavior(self):
+        self.enable_policy(approval=False)
+        self.company.portfolio_masterdata_enabled = False
+        self.assertFalse(self.other_company.portfolio_masterdata_enabled)
+        for user in (self.sales, self.buyer):
+            user.write({"company_ids": [Command.link(self.other_company.id)]})
+        service = self.env["product.product"].create({
+            "name": "Native compatible company transfer service", "type": "service", "default_code": "COMPAT-XFER",
+        })
+        sale = self.sale(order_line=[Command.create({
+            "product_id": service.id, "product_uom_qty": 1, "price_unit": 1, "tax_id": [Command.clear()],
+        })])
+        purchase = self.purchase(order_line=[Command.create({
+            "product_id": service.id, "product_qty": 1, "price_unit": 1,
+            "product_uom": service.uom_po_id.id, "date_planned": fields.Datetime.now(),
+            "taxes_id": [Command.clear()],
+        })])
+        scope = {"allowed_company_ids": (self.company | self.other_company).ids}
+        sale, purchase = sale.with_context(**scope), purchase.with_context(**scope)
+        sale.action_confirm()
+        purchase.button_confirm()
+        self.assertEqual(sale.state, "sale")
+        self.assertEqual(purchase.state, "purchase")
+        warehouse = self.env["stock.warehouse"].search([("company_id", "=", self.other_company.id)], limit=1)
+        sale.with_company(self.other_company).write({
+            "company_id": self.other_company.id, "warehouse_id": warehouse.id,
+        })
+        purchase.with_company(self.other_company).write({
+            "company_id": self.other_company.id, "picking_type_id": warehouse.in_type_id.id,
+        })
+        self.assertEqual(sale.company_id, self.other_company)
+        self.assertEqual(purchase.company_id, self.other_company)
+        self.assertEqual(sale.state, "sale")
+        self.assertEqual(purchase.state, "purchase")
+        self.assertFalse(sale.picking_ids | purchase.picking_ids)
