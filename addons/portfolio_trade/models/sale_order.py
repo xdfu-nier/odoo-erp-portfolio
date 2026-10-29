@@ -55,7 +55,8 @@ class SaleOrder(models.Model):
     portfolio_approval_enabled = fields.Boolean(related="company_id.portfolio_approval_enabled")
     portfolio_approval_current = fields.Boolean(compute="_compute_portfolio_approval_current")
     portfolio_purchase_ids = fields.One2many(
-        "purchase.order", "portfolio_source_sale_id", string="Related Purchases", readonly=True, copy=False,
+        "purchase.order", "portfolio_source_sale_id", string="Related Purchases",
+        readonly=True, copy=False, check_company=True,
     )
 
     def action_portfolio_purchases(self):
@@ -234,6 +235,15 @@ class SaleOrder(models.Model):
                 affected |= lines.order_id
         affected._portfolio_lock(extra)
         if "company_id" in values:
+            changing = self.filtered(lambda order: order.company_id.id != values["company_id"])
+            # Sales write access and the shared company/SO locks are already
+            # checked. Read only the existence of incompatible company links;
+            # the salesperson need not read hidden PO payloads or display names.
+            if changing and self.env["purchase.order"].sudo().search_count([
+                ("portfolio_source_sale_id", "in", changing.ids),
+                ("company_id", "!=", values["company_id"]),
+            ], limit=1):
+                raise UserError(_("The sales company must remain consistent with its linked purchases."))
             for order in self:
                 if (
                     order.company_id.id != values["company_id"] and order.state == "sale"

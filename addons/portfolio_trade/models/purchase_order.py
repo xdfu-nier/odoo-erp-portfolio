@@ -20,8 +20,10 @@ class PurchaseOrder(models.Model):
     def _portfolio_masterdata_lock(self, extra_companies=None, extra_sales=None):
         """Shared order: company IDs, source SO IDs, then purchase IDs.
 
-        Buyers have read-only sales access. Do not use sale._portfolio_lock,
-        which requires sales write access and updates the approval revision.
+        Buyers need only sales read access. The bounded technical revision
+        update makes a stale company-transfer request retry and see a newly
+        attached purchase, including when all company policies are disabled.
+        Do not call sale._portfolio_lock, which requires sales business writes.
         """
         if self:
             self.check_access("write")
@@ -37,6 +39,13 @@ class PurchaseOrder(models.Model):
             )
             sources.invalidate_recordset()
             sources.check_access("read")
+            sources.flush_recordset(["portfolio_revision"])
+            self.env.cr.execute(
+                "UPDATE sale_order SET portfolio_revision = portfolio_revision + 1 "
+                "WHERE id IN %s", [tuple(sources.ids)],
+            )
+            sources.invalidate_recordset(["portfolio_revision"])
+            sources.modified(["portfolio_revision"])
         if self:
             self.env.cr.execute(
                 "SELECT id FROM purchase_order WHERE id IN %s ORDER BY id FOR UPDATE", [tuple(self.ids)],

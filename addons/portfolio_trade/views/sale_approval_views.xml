@@ -9,6 +9,7 @@
                 <field name="portfolio_approval_enabled" invisible="1"/>
                 <field name="portfolio_approval_current" invisible="1"/>
                 <button name="action_portfolio_submit" type="object" string="Submit for Approval"
+                        groups="sales_team.group_sale_salesman"
                         invisible="not portfolio_approval_enabled or state not in ('draft', 'sent') or (portfolio_approval_state == 'submitted' and portfolio_approval_current)"/>
                 <button name="action_portfolio_approve" type="object" string="Approve"
                         groups="sales_team.group_sale_manager"
@@ -18,7 +19,8 @@
                         invisible="not portfolio_approval_enabled or not portfolio_approval_current or portfolio_approval_state != 'submitted' or state not in ('draft', 'sent')"/>
             </xpath>
             <xpath expr="//notebook" position="inside">
-                <page string="Sales Approval" name="portfolio_approval" invisible="not portfolio_approval_enabled">
+                <page string="Sales Approval" name="portfolio_approval" invisible="not portfolio_approval_enabled"
+                      groups="sales_team.group_sale_salesman">
                     <div class="alert alert-warning" invisible="portfolio_approval_current or portfolio_approval_state not in ('submitted', 'approved')">
                         Company policy changed. Submit this quotation again before approval or confirmation.
                     </div>
@@ -37,6 +39,16 @@
                         </list>
                     </field>
                 </page>
+            </xpath>
+        </field>
+    </record>
+    <record id="sale_order_form_source_widgets" model="ir.ui.view">
+        <field name="name">sale.order.form.portfolio.source.widgets</field>
+        <field name="model">sale.order</field>
+        <field name="inherit_id" ref="sale_management.sale_order_form_quote"/>
+        <field name="arch" type="xml">
+            <xpath expr="//page[@name='optional_products']" position="attributes">
+                <attribute name="groups">sales_team.group_sale_salesman,account.group_account_invoice,account.group_account_readonly</attribute>
             </xpath>
         </field>
     </record>

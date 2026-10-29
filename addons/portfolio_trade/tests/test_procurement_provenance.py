@@ -1,3 +1,4 @@
+from lxml import etree
 from odoo import Command, fields
 from odoo.exceptions import AccessError, UserError
 from odoo.tests import TransactionCase, new_test_user, tagged
@@ -169,6 +170,24 @@ class TestProcurementProvenance(TransactionCase):
         self.assertFalse(order.picking_ids.move_ids.sale_line_id)
         self.assertFalse(order.picking_ids.move_ids.route_ids)
         self.assertEqual(self.source.with_user(self.manager).portfolio_purchase_ids, order)
+
+    def test_buyer_can_web_read_actual_source_form_without_sales_audit_access(self):
+        self.enable()
+        self.assertFalse(self.buyer.has_group("sales_team.group_sale_salesman"))
+        self.assertFalse(self.env["portfolio.sale.approval"].with_user(self.buyer).has_access("read"))
+        source = self.source.with_user(self.buyer)
+        view = source.get_view(view_id=self.env.ref("sale.view_order_form").id, view_type="form")
+        arch = etree.fromstring(view["arch"].encode())
+        specification = {
+            node.get("name"): {} for node in arch.xpath(".//field[not(ancestor::field)]")
+        }
+        if "portfolio_approval_history_ids" in specification:
+            specification["portfolio_approval_history_ids"] = {"fields": {"event": {}}}
+        source.invalidate_recordset(["portfolio_approval_history_ids"])
+        result = source.web_read(specification)
+        self.assertEqual(result[0]["id"], source.id)
+        self.assertNotIn("portfolio_approval_history_ids", specification)
+        self.assertFalse(arch.xpath(".//button[@name='action_portfolio_submit']"))
 
     def test_buyer_receives_no_business_mutation_groups_or_sales_permissions(self):
         self.enable()
@@ -359,6 +378,62 @@ class TestProcurementProvenance(TransactionCase):
                 order.with_company(self.company).write(values)
             self.assertEqual(order.company_id, self.other_company)
         self.assertEqual(sale.warehouse_id, warehouse_b)
+
+    def test_canceled_source_company_transfer_cannot_break_linked_purchase_history(self):
+        self.enable()
+        self.company.write({"portfolio_masterdata_enabled": False, "portfolio_approval_enabled": False})
+        actor = new_test_user(
+            self.env, login="provenance_source_transfer_sales", groups="sales_team.group_sale_salesman",
+            company_id=self.company.id, company_ids=[Command.set(self.companies.ids)],
+        )
+        self.assertFalse(self.env["purchase.order"].with_user(actor).has_access("read"))
+        service = self.env["product.product"].create({"name": "Canceled source service", "type": "service"})
+        warehouse_b = self.env["stock.warehouse"].search([("company_id", "=", self.other_company.id)], limit=1)
+        for policy_enabled in (True, False):
+            with self.subTest(policy_enabled=policy_enabled), self.cr.savepoint():
+                self.company.portfolio_fulfillment_enabled = True
+                source = self.env["sale.order"].with_user(actor).with_company(self.company).create({
+                    "partner_id": self.customer.id, "user_id": actor.id,
+                    "order_line": [Command.create({
+                        "product_id": service.id, "product_uom_qty": 1, "price_unit": 100,
+                        "tax_id": [Command.clear()],
+                    })],
+                })
+                source.action_confirm()
+                order = self.purchase(portfolio_source_sale_id=source.id, order_line=[Command.create({
+                    "product_id": service.id, "product_qty": 1, "price_unit": 60,
+                    "product_uom": service.uom_po_id.id, "date_planned": fields.Datetime.now(),
+                    "taxes_id": [Command.clear()],
+                })])
+                order.button_confirm()
+                source.with_context(disable_cancel_warning=True).action_cancel()
+                self.company.portfolio_fulfillment_enabled = policy_enabled
+                self.assertEqual(source.state, "cancel")
+                self.assertEqual(order.state, "purchase")
+                with self.assertRaises(UserError):
+                    source.with_company(self.other_company).write({
+                        "company_id": self.other_company.id, "warehouse_id": warehouse_b.id,
+                    })
+                self.assertEqual(source.company_id, self.company)
+                self.assertEqual(order.company_id, self.company)
+                self.assertEqual(order.portfolio_source_sale_id, source)
+                self.assertTrue(source.with_user(self.buyer).read(["name"]))
+
+    def test_unlinked_canceled_source_keeps_native_company_transfer(self):
+        self.enable()
+        self.company.write({"portfolio_masterdata_enabled": False, "portfolio_approval_enabled": False})
+        service = self.env["product.product"].create({"name": "Unlinked canceled service", "type": "service"})
+        source = self.sale(confirmed=False)
+        source.order_line.write({"product_id": service.id})
+        source.action_confirm()
+        source.with_context(disable_cancel_warning=True).action_cancel()
+        warehouse_b = self.env["stock.warehouse"].search([("company_id", "=", self.other_company.id)], limit=1)
+        source.with_company(self.other_company).write({
+            "company_id": self.other_company.id, "warehouse_id": warehouse_b.id,
+        })
+        self.assertEqual(source.state, "cancel")
+        self.assertEqual(source.company_id, self.other_company)
+        self.assertEqual(source.warehouse_id, warehouse_b)
 
     def test_disabled_company_keeps_native_purchase_paths_and_commercial_edits(self):
         self.features()
