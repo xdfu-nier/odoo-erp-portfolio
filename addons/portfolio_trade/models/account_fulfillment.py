@@ -32,12 +32,23 @@ MOVE_FACTS = RAW_MOVE | {
 }
 
 
+def _relation_commands(value):
+    """Match native _RelationalMulti.write_batch before inspecting identities."""
+    if value is False or value is None:
+        return [(5, 0, 0)]
+    if isinstance(value, models.BaseModel):
+        return [(6, 0, value.ids)]
+    if isinstance(value, tuple):
+        return [(6, 0, value)]
+    if isinstance(value, list) and value and not isinstance(value[0], (tuple, list)):
+        return [(6, 0, value)]
+    return value or []
+
+
 def _relation_ids(commands):
     ids = set()
-    for command in commands or []:
-        if isinstance(command, int):
-            ids.add(command)
-        elif command[0] == 6:
+    for command in _relation_commands(commands):
+        if command[0] == 6:
             ids.update(command[2])
         elif command[0] in (1, 2, 3, 4):
             ids.add(command[1])
@@ -72,7 +83,7 @@ def _scope(records, values_list=(), creating=False):
         if records._name == "account.move.line":
             sources |= env["sale.order.line"].browse(_relation_ids(values.get("sale_line_ids")))
         for field in ("line_ids", "invoice_line_ids"):
-            for command in values.get(field) or []:
+            for command in _relation_commands(values.get(field, [])):
                 if command[0] in (1, 2, 3, 4):
                     entries |= env["account.move.line"].browse(command[1])
                 elif command[0] == 6:
@@ -108,6 +119,11 @@ def _preflight(records, values_list, creating=False):
     for values in values_list:
         if _supplied(records, values, raw, creating):
             raise UserError(env._("Invoice accounting amounts are derived from the native quantity, price and taxes."))
+        if creating and records._name == "account.move.line":
+            effective = _defaults(records, values)
+            parent = env["account.move"].browse(effective.get("move_id") or []).sudo()
+            if parent.state == "posted":
+                raise UserError(env._("Public invoice line creation cannot append facts to a posted invoice."))
         if records._name == "account.move":
             effective = _defaults(records, values) if creating else values
             if creating and effective.get("state", "draft") != "draft":
@@ -116,7 +132,7 @@ def _preflight(records, values_list, creating=False):
                 raise UserError(env._("Use the native invoice posting, draft or cancellation action."))
             line_model = records.env["account.move.line"]
             for name in ("line_ids", "invoice_line_ids"):
-                for command in effective.get(name) or []:
+                for command in _relation_commands(effective.get(name, [])):
                     if command[0] in (0, 1) and _supplied(line_model, command[2], RAW_LINE, command[0] == 0):
                         raise UserError(env._("Invoice line amounts must be computed by native accounting."))
                     linked = line_model.browse(
@@ -137,7 +153,7 @@ def _preflight(records, values_list, creating=False):
 
 def _resulting_ids(current_ids, commands):
     ids = set(current_ids)
-    for command in commands or []:
+    for command in _relation_commands(commands):
         if command[0] == 6:
             ids = set(command[2])
         elif command[0] == 5:

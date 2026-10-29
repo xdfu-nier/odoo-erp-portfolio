@@ -285,3 +285,74 @@ class TestAccountFulfillment(FulfillmentLedgerCommon):
                     "price_unit": 100, "tax_id": [Command.clear()],
                 })
             self.assertEqual(self.accounting_snapshot(), before)
+
+    def posted_append_values(self):
+        values = self.invoice_values(1)["invoice_line_ids"][0][2]
+        values["price_unit"] = 0
+        return values
+
+    def test_public_aml_create_cannot_append_semantic_claim_to_posted_invoice(self):
+        self.invoice.invoice_line_ids.write({"quantity": 60})
+        self.invoice.action_post()
+        with self.env.cr.savepoint():
+            before = self.accounting_snapshot()
+            with unittest.TestCase.assertRaises(self, UserError):
+                self.env["account.move.line"].with_user(self.billing).create({
+                    **self.posted_append_values(), "move_id": self.invoice.id,
+                })
+            self.assertEqual(self.accounting_snapshot(), before)
+
+    def test_default_posted_aml_parent_is_rejected_at_api_preflight(self):
+        self.invoice.invoice_line_ids.write({"quantity": 60})
+        self.invoice.action_post()
+        model = self.env["account.move.line"].with_user(self.billing).with_context(default_move_id=self.invoice.id)
+        draft = self.empty_invoice()
+        created = model.create({**self.posted_append_values(), "move_id": draft.id})
+        self.assertEqual(created.move_id, draft, "An explicit draft parent overrides the posted default.")
+        with self.env.cr.savepoint():
+            before = self.accounting_snapshot()
+            try:
+                with unittest.TestCase.assertRaises(self, UserError):
+                    model.create(self.posted_append_values())
+            except KeyError as error:
+                self.fail(f"Protected effective posted parent must fail policy preflight before native requires explicit move_id: {error}")
+            self.assertEqual(self.accounting_snapshot(), before)
+
+    def test_false_and_none_relation_forms_cannot_clear_direct_or_nested_source(self):
+        for nested in (False, True):
+            # Native [] means no commands; an empty tuple/recordset means SET[].
+            if nested:
+                self.invoice.write({"invoice_line_ids": [Command.update(
+                    self.invoice.invoice_line_ids.id, {"sale_line_ids": []},
+                )]})
+            else:
+                self.invoice.invoice_line_ids.write({"sale_line_ids": []})
+            self.assertEqual(self.invoice.invoice_line_ids.sale_line_ids, self.line)
+            for value in (False, None, (), self.line.browse()):
+                with self.subTest(nested=nested, value=value), self.env.cr.savepoint():
+                    before = self.accounting_snapshot()
+                    with unittest.TestCase.assertRaises(self, UserError):
+                        values = {"sale_line_ids": value}
+                        if nested:
+                            self.invoice.write({"invoice_line_ids": [Command.update(self.invoice.invoice_line_ids.id, values)]})
+                        else:
+                            self.invoice.invoice_line_ids.write(values)
+                    self.assertEqual(self.accounting_snapshot(), before)
+
+    def test_native_relation_forms_authorize_candidate_company_before_revision(self):
+        # Native ORM accepts a recordset as SET; retaining the same source is a
+        # positive compatibility control before trying foreign-company sources.
+        self.invoice.invoice_line_ids.write({"sale_line_ids": self.line})
+        self.assertEqual(self.invoice.invoice_line_ids.sale_line_ids, self.line)
+        other = self.make_sale(quantity=1, company=self.other_company).order_line
+        for value in (other.ids, tuple(other.ids), other):
+            with self.subTest(form=type(value).__name__), self.env.cr.savepoint():
+                entries = self.invoice.invoice_line_ids.with_user(self.billing_a).sudo().with_context(
+                    allowed_company_ids=self.company.ids,
+                )
+                self.assertEqual(self.billing_a.company_ids, self.company)
+                self.assertEqual(entries.with_user(self.billing_a).env.companies, self.company)
+                self.api("require_billing")(entries.env, self.company.with_env(entries.env))
+                before = self.accounting_snapshot()
+                self.assert_denied_before_revision(lambda: entries.write({"sale_line_ids": value}))
+                self.assertEqual(self.accounting_snapshot(), before)

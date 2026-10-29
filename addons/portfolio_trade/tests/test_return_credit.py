@@ -2,8 +2,8 @@
 import unittest
 
 from odoo import Command, fields
-from odoo.exceptions import UserError
-from odoo.tests import tagged
+from odoo.exceptions import AccessError, UserError
+from odoo.tests import new_test_user, tagged
 
 from .test_fulfillment_ledger import FulfillmentLedgerCommon
 
@@ -373,3 +373,63 @@ class TestReturnCredit(FulfillmentLedgerCommon):
         self.assertEqual(credit.amount_untaxed, 5950)
         credit.action_post()
         self.assertEqual(credit.state, "posted")
+
+    def test_stock_and_own_sales_actor_can_return_another_salespersons_delivery(self):
+        actor = new_test_user(
+            self.env, login="return_stock_own_sales",
+            groups="sales_team.group_sale_salesman,stock.group_stock_user",
+            company_id=self.company.id, company_ids=[Command.set(self.companies.ids)],
+        )
+        self.assertFalse(actor.has_group("sales_team.group_sale_manager"))
+        with self.assertRaises(AccessError):
+            self.source.with_user(actor).check_access("read")
+        try:
+            wizard = self.env["stock.return.picking"].with_user(actor).with_context(
+                allowed_company_ids=self.company.ids, active_model="stock.picking",
+                active_id=self.delivery.id, active_ids=self.delivery.ids,
+            ).create({})
+            wizard.product_return_moves.write({"quantity": 1})
+            result = wizard.action_create_returns()
+            returned = self.env["stock.picking"].with_user(actor).with_context(
+                allowed_company_ids=self.company.ids,
+            ).browse(result["res_id"])
+            returned.move_ids.write({"quantity": 1, "picked": True})
+            returned.button_validate()
+        except AccessError as error:
+            self.fail(f"The actual Stock actor must retain native return rights without Sales read-all: {error}")
+        self.assertEqual(returned.create_uid, actor)
+        self.assertEqual(returned.state, "done")
+
+    def test_actual_customer_return_details_cannot_hide_under_internal_parent(self):
+        destination = self.env["stock.location"].create({
+            "name": "Hidden return destination", "usage": "internal", "company_id": self.company.id,
+            "location_id": self.location.id,
+        })
+        move = self.env["stock.move"].with_user(self.warehouse).create(self.return_values(
+            origin_returned_move_id=False, location_id=self.location.id, location_dest_id=destination.id,
+            product_uom_qty=1, to_refund=False,
+        ))
+        move._action_confirm(merge=False)
+        self.env["stock.move.line"].with_user(self.warehouse).create({
+            "move_id": move.id, "product_id": self.product.id, "product_uom_id": self.product.uom_id.id,
+            "quantity": 1, "location_id": self.customer_location.id, "location_dest_id": destination.id,
+        })
+        move.write({"picked": True})
+        with self.env.cr.savepoint():
+            before = self.physical_snapshot()
+            with unittest.TestCase.assertRaises(self, UserError):
+                move._action_done()
+            self.assertEqual(self.physical_snapshot(), before)
+
+    def test_genuine_return_detail_cannot_enter_another_warehouse(self):
+        other = self.env["stock.warehouse"].create({
+            "name": "Other return warehouse", "code": "RCB", "company_id": self.company.id,
+        })
+        returned = self.pending_return(1)
+        returned.move_ids.write({"quantity": 1, "picked": True})
+        returned.move_ids.move_line_ids.write({"location_dest_id": other.lot_stock_id.id})
+        with self.env.cr.savepoint():
+            before = self.physical_snapshot()
+            with unittest.TestCase.assertRaises(self, UserError):
+                returned.button_validate()
+            self.assertEqual(self.physical_snapshot(), before)

@@ -5,8 +5,8 @@ from odoo import api, models
 from odoo.exceptions import UserError
 from odoo.tools.float_utils import float_compare
 
-from .financial_policy import _stock_quantity, physical_facts
-from .stock_policy import controlled, run_physical
+from .financial_policy import _stock_quantity
+from .stock_policy import authorize_companies, companies_for, controlled, run_physical
 
 RETURN_FIELDS = {
     "origin_returned_move_id", "sale_line_id", "company_id", "product_id", "product_uom",
@@ -42,10 +42,13 @@ def _return_identity(model, values, move=None):
         configured = env["ir.default"]._get_model_defaults(model._name)
         if "default_to_refund" not in env.context and "to_refund" not in configured:
             values["to_refund"] = candidate["to_refund"] = True
-    # This checks the real uid's source ACL and actual/active companies before
-    # the bounded elevated original/SML reads. Physical facts include old returns
-    # regardless of their legacy to_refund presentation flag.
-    physical_facts(sources.with_env(env))
+    # Warehouse operations authorize the real stock actor's actual/active
+    # companies and inspect bounded commercial identities, as M2a lock_stock
+    # does. An Own Sales role must not remove otherwise valid Stock rights on
+    # another salesperson's picking. The financial fact API retains its separate
+    # original-user source-read contract without any broader Sales grants here.
+    companies = companies_for(model, candidate) | sources.order_id.company_id | origin.company_id
+    authorize_companies(companies.with_env(env))
     company = env["res.company"].browse(candidate.get("company_id") or [])
     product = env["product.product"].browse(candidate.get("product_id") or [])
     uom = env["uom.uom"].browse(candidate.get("product_uom") or [])
@@ -104,6 +107,21 @@ def _check_done_returns(moves):
             raise UserError(env._("Cumulative completed returns cannot exceed the original actual delivery quantity."))
 
 
+def _check_actual_return_boundaries(moves):
+    """Actual SML directions cannot conceal a customer return in an internal parent."""
+    env = moves.env
+    for move in moves.sudo():
+        if not controlled(move.sale_line_id.order_id.company_id):
+            continue
+        incoming = move.move_line_ids.filtered(
+            lambda detail: detail.location_id._is_outgoing() and not detail.location_dest_id._is_outgoing(),
+        )
+        if incoming:
+            if not move.location_id._is_outgoing() or move.location_dest_id._is_outgoing():
+                raise UserError(env._("Actual customer return details must belong to a genuine customer return movement."))
+            _return_identity(moves, {}, move)
+
+
 class StockMove(models.Model):
     _inherit = "stock.move"
 
@@ -135,6 +153,7 @@ class StockMove(models.Model):
 
     def _action_done(self, cancel_backorder=False):
         def complete():
+            _check_actual_return_boundaries(self)
             result = super(StockMove, self)._action_done(cancel_backorder=cancel_backorder)
             _check_done_returns(result)
             return result
