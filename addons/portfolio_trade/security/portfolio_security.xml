@@ -1,5 +1,25 @@
 <?xml version="1.0" encoding="utf-8"?>
 <odoo>
+    <record id="procurement_source_sale_read_rule" model="ir.rule">
+        <field name="name">Purchase source: confirmed fulfillment sales and linked history</field>
+        <field name="model_id" ref="sale.model_sale_order"/>
+        <field name="domain_force">['|', '&amp;', ('company_id.portfolio_fulfillment_enabled', '=', True), ('state', '=', 'sale'), ('portfolio_purchase_ids', '!=', False)]</field>
+        <field name="groups" eval="[(4, ref('purchase.group_purchase_user'))]"/>
+        <field name="perm_read" eval="True"/>
+        <field name="perm_write" eval="False"/>
+        <field name="perm_create" eval="False"/>
+        <field name="perm_unlink" eval="False"/>
+    </record>
+    <record id="procurement_source_sale_line_read_rule" model="ir.rule">
+        <field name="name">Purchase source: confirmed fulfillment sales lines and linked history</field>
+        <field name="model_id" ref="sale.model_sale_order_line"/>
+        <field name="domain_force">['|', '&amp;', ('order_id.company_id.portfolio_fulfillment_enabled', '=', True), ('order_id.state', '=', 'sale'), ('order_id.portfolio_purchase_ids', '!=', False)]</field>
+        <field name="groups" eval="[(4, ref('purchase.group_purchase_user'))]"/>
+        <field name="perm_read" eval="True"/>
+        <field name="perm_write" eval="False"/>
+        <field name="perm_create" eval="False"/>
+        <field name="perm_unlink" eval="False"/>
+    </record>
     <record id="approval_company_rule" model="ir.rule">
         <field name="name">Approval history: allowed companies</field>
         <field name="model_id" ref="model_portfolio_sale_approval"/>

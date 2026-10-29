@@ -11,6 +11,8 @@ class ResCompany(models.Model):
     portfolio_masterdata_enabled = fields.Boolean(
         string="Industrial parts master-data validation", default=False,
     )
+    portfolio_fulfillment_enabled = fields.Boolean(string="Order fulfillment policy", default=False)
+    portfolio_stock_revision = fields.Integer(default=0, readonly=True, copy=False)
     portfolio_approval_amount = fields.Monetary(
         string="Approval untaxed amount", default=50000, currency_field="currency_id",
     )
@@ -43,6 +45,33 @@ class ResCompany(models.Model):
             self.invalidate_recordset()
             self.check_access("read")
 
+    def _portfolio_lock_fulfillment(self):
+        """Serialize stock facts without granting the business actor company writes.
+
+        Native stock/accounting paths may use sudo, which keeps the original uid.
+        Check that actor's actual membership and read access before locking; a
+        caller-controlled allowed_company_ids must never expand their companies.
+        Updating this technical column makes a stale repeatable-read contender
+        fail serialization and enter Odoo's normal transaction retry protocol.
+        """
+        actor_companies = self.with_user(self.env.uid)
+        if set(self.ids) - set(actor_companies.env.user.company_ids.ids):
+            raise AccessError(_("The fulfillment company is outside your allowed companies."))
+        actor_companies.check_access("read")
+        if set(self.ids) - set(actor_companies.env.companies.ids):
+            raise AccessError(_("The fulfillment company is outside your active companies."))
+        self._portfolio_lock_policy()
+        actor_companies.check_access("read")
+        enabled = self.filtered("portfolio_fulfillment_enabled")
+        if enabled:
+            enabled.flush_recordset(["portfolio_stock_revision"])
+            self.env.cr.execute(
+                "UPDATE res_company SET portfolio_stock_revision = portfolio_stock_revision + 1 "
+                "WHERE id IN %s", [tuple(enabled.ids)],
+            )
+            enabled.invalidate_recordset(["portfolio_stock_revision"])
+            enabled.modified(["portfolio_stock_revision"])
+
     @api.constrains("portfolio_approval_amount", "portfolio_approval_discount")
     def _check_portfolio_policy(self):
         for company in self:
@@ -56,11 +85,12 @@ class ResCompany(models.Model):
     def create(self, vals_list):
         controlled = {
             "portfolio_approval_enabled", "portfolio_approval_amount", "portfolio_approval_discount",
-            "portfolio_masterdata_enabled",
+            "portfolio_masterdata_enabled", "portfolio_fulfillment_enabled",
         }
+        protected = {"portfolio_approval_policy_version", "portfolio_stock_revision"}
         defaults = self.env["ir.default"]._get_model_defaults(self._name)
-        if "portfolio_approval_policy_version" in defaults or "default_portfolio_approval_policy_version" in self.env.context:
-            raise AccessError(_("Approval policy versions are maintained by the system."))
+        if protected.intersection(defaults) or any(f"default_{key}" in self.env.context for key in protected):
+            raise AccessError(_("Company policy revisions are maintained by the system."))
         if not self.env.user.has_group("base.group_system") and (
             controlled.intersection(defaults)
             or any(f"default_{key}" in self.env.context for key in controlled)
@@ -68,19 +98,19 @@ class ResCompany(models.Model):
             raise AccessError(_("Only settings administrators can configure company policies."))
         for values in vals_list:
             self._portfolio_validate_values(values)
-            if "portfolio_approval_policy_version" in values:
-                raise AccessError(_("Approval policy versions are maintained by the system."))
+            if protected.intersection(values):
+                raise AccessError(_("Company policy revisions are maintained by the system."))
             if controlled.intersection(values):
                 if not self.env.user.has_group("base.group_system"):
                     raise AccessError(_("Only settings administrators can configure approval policy."))
         return super().create(vals_list)
 
     def write(self, values):
-        if "portfolio_approval_policy_version" in values:
-            raise AccessError(_("Approval policy versions are maintained by the system."))
+        if {"portfolio_approval_policy_version", "portfolio_stock_revision"}.intersection(values):
+            raise AccessError(_("Company policy revisions are maintained by the system."))
         policy_fields = {
             "portfolio_approval_enabled", "portfolio_approval_amount", "portfolio_approval_discount",
-            "currency_id", "portfolio_masterdata_enabled",
+            "currency_id", "portfolio_masterdata_enabled", "portfolio_fulfillment_enabled",
         }
         if not policy_fields.intersection(values):
             return super().write(values)
@@ -91,7 +121,7 @@ class ResCompany(models.Model):
         self._portfolio_lock_policy()
         for company in self:
             updated = dict(values)
-            if (policy_fields - {"portfolio_masterdata_enabled"}).intersection(values):
+            if (policy_fields - {"portfolio_masterdata_enabled", "portfolio_fulfillment_enabled"}).intersection(values):
                 updated["portfolio_approval_policy_version"] = company.portfolio_approval_policy_version + 1
             super(ResCompany, company).write(updated)
         return True

@@ -54,6 +54,21 @@ class SaleOrder(models.Model):
     portfolio_approval_history_ids = fields.One2many("portfolio.sale.approval", "order_id", readonly=True, copy=False)
     portfolio_approval_enabled = fields.Boolean(related="company_id.portfolio_approval_enabled")
     portfolio_approval_current = fields.Boolean(compute="_compute_portfolio_approval_current")
+    portfolio_purchase_ids = fields.One2many(
+        "purchase.order", "portfolio_source_sale_id", string="Related Purchases",
+        readonly=True, copy=False, check_company=True,
+    )
+
+    def action_portfolio_purchases(self):
+        self.ensure_one()
+        self.check_access("read")
+        purchases = self.env["purchase.order"].search([("portfolio_source_sale_id", "=", self.id)])
+        return {
+            "type": "ir.actions.act_window", "name": _("Related Purchases"),
+            "res_model": "purchase.order", "view_mode": "list,form",
+            "domain": [("id", "in", purchases.ids)],
+            "context": {"create": False, "edit": False, "delete": False},
+        }
 
     @api.depends("portfolio_approval_fingerprint", "portfolio_approval_policy_version", "company_id.portfolio_approval_policy_version")
     def _compute_portfolio_approval_current(self):
@@ -220,10 +235,22 @@ class SaleOrder(models.Model):
                 affected |= lines.order_id
         affected._portfolio_lock(extra)
         if "company_id" in values:
+            changing = self.filtered(lambda order: order.company_id.id != values["company_id"])
+            # Sales write access and the shared company/SO locks are already
+            # checked. Read only the existence of incompatible company links;
+            # the salesperson need not read hidden PO payloads or display names.
+            if changing and self.env["purchase.order"].sudo().search_count([
+                ("portfolio_source_sale_id", "in", changing.ids),
+                ("company_id", "!=", values["company_id"]),
+            ], limit=1):
+                raise UserError(_("The sales company must remain consistent with its linked purchases."))
             for order in self:
                 if (
                     order.company_id.id != values["company_id"] and order.state == "sale"
-                    and (order.company_id.portfolio_masterdata_enabled or extra.portfolio_masterdata_enabled)
+                    and (
+                        order.company_id.portfolio_masterdata_enabled or extra.portfolio_masterdata_enabled
+                        or order.company_id.portfolio_fulfillment_enabled or extra.portfolio_fulfillment_enabled
+                    )
                 ):
                     raise UserError(_("Change the sales company on a draft quotation before confirmation."))
         if ORDER_COMMERCIAL.intersection(values):
