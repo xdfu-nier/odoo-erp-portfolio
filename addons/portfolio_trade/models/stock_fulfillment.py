@@ -8,7 +8,6 @@ from .stock_policy import (
     include_native_records,
     lock_stock,
     physical_capability,
-    require_warehouse,
     run_physical,
 )
 
@@ -136,10 +135,10 @@ class StockPicking(models.Model):
         return super().unlink()
 
     def button_validate(self):
-        companies = companies_for(self)
-        if controlled(companies):
-            require_warehouse(self.env, companies)
-        return super().button_validate()
+        # Native validation partitions a batch into two completion cohorts.
+        # Keep both inside one physical frame and rollback boundary, including
+        # when a later cohort fails after an earlier one has already completed.
+        return run_physical(self, lambda: super(StockPicking, self).button_validate())
 
     def _action_done(self):
         return run_physical(self, lambda: super(StockPicking, self)._action_done())

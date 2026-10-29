@@ -104,7 +104,8 @@ class TestStockFulfillment(TransactionCase):
         self.env.flush_all()
         self.env.invalidate_all()
         moves = self.env["stock.move"].search([("company_id", "in", self.companies.ids)], order="id")
-        products = self.product | moves.product_id
+        lines = self.env["stock.move.line"].search([("company_id", "in", self.companies.ids)], order="id")
+        products = self.product | moves.product_id | lines.product_id
         return {
             "quants": self.env["stock.quant"].search([
                 ("product_id", "in", products.ids),
@@ -115,7 +116,7 @@ class TestStockFulfillment(TransactionCase):
                 "state", "product_id", "product_uom_qty", "quantity", "product_uom", "company_id",
                 "location_id", "location_dest_id", "picking_id", "sale_line_id", "origin_returned_move_id", "to_refund",
             ]),
-            "lines": moves.move_line_ids.sorted("id").read([
+            "lines": lines.read([
                 "state", "quantity", "product_id", "product_uom_id", "company_id", "location_id", "location_dest_id",
                 "lot_id", "package_id", "result_package_id", "owner_id", "move_id", "picking_id",
             ]),
@@ -167,6 +168,20 @@ class TestStockFulfillment(TransactionCase):
             with unittest.TestCase.assertRaises(self, exception):
                 operation()
             self.assertEqual(self.facts(), before)
+
+    def assert_safe_native_defaults(self, operation, verify):
+        """A forged default may be rejected atomically or normalized privately."""
+        before = self.facts()
+        with self.cr.savepoint():
+            self.env.invalidate_all()
+            try:
+                result = operation()
+            except UserError:
+                self.assertEqual(self.facts(), before)
+            else:
+                self.env.flush_all()
+                self.env.invalidate_all()
+                verify(result)
 
     def test_receipt_delivery_backorders_preserve_native_records_and_quantities(self):
         self.assertFalse(self.company.portfolio_approval_enabled)
@@ -291,6 +306,24 @@ class TestStockFulfillment(TransactionCase):
         self.source.picking_ids.with_user(self.warehouse).move_ids.write({"quantity": 41, "picked": True})
         self.assert_blocked_unchanged(lambda: self.validate(self.source.picking_ids, None, expect_backorder=True))
         self.assertNotEqual(self.source.picking_ids.state, "done")
+        self.assertEqual(self.stock(), 40)
+
+    def test_public_batch_validation_rolls_back_both_native_backorder_cohorts(self):
+        first = self.make_sale(quantity=30)
+        second = self.make_sale(quantity=30)
+        (first | second).action_confirm()
+        never = self.warehouse_a.out_type_id.copy({
+            "name": "Physical never-backorder deliveries", "sequence_code": "PHYS-NEVER",
+            "create_backorder": "never",
+        })
+        self.warehouse_a.out_type_id.create_backorder = "ask"
+        first.picking_ids.write({"picking_type_id": never.id})
+        pickings = (first.picking_ids | second.picking_ids).with_user(self.warehouse)
+        pickings.move_ids.write({"quantity": 30, "picked": True})
+        self.assertEqual(sum(pickings.move_ids.mapped("quantity")), 60)
+        self.assertEqual(self.stock(), 40)
+        self.assert_blocked_unchanged(lambda: pickings.button_validate())
+        self.assertFalse(pickings.filtered(lambda picking: picking.state == "done"))
         self.assertEqual(self.stock(), 40)
 
     def test_multiple_lines_cannot_each_spend_the_same_stock(self):
@@ -524,6 +557,68 @@ class TestStockFulfillment(TransactionCase):
         self.assert_blocked_unchanged(lambda: model.with_context(default_quantity=999).create(values))
         self.env["ir.default"].set("stock.quant", "quantity", 999, user_id=self.warehouse.id)
         self.assert_blocked_unchanged(lambda: model.create(values))
+
+    def test_standalone_sales_line_reservation_cannot_inherit_physical_quant_defaults(self):
+        self.assertFalse(self.sales.has_group("stock.group_stock_user"))
+        for origin in ("context", "ir.default"):
+            with self.subTest(origin=origin):
+                location = self.env["stock.location"].create({
+                    "name": f"Empty standalone default source {origin}", "usage": "internal",
+                    "company_id": self.company.id, "location_id": self.warehouse_a.view_location_id.id,
+                })
+                model = self.env["stock.move.line"].with_user(self.sales).with_company(self.company)
+                if origin == "context":
+                    model = model.with_context(default_quantity=999)
+                else:
+                    self.env["ir.default"].set("stock.quant", "quantity", 999, user_id=self.sales.id)
+
+                def verify(line):
+                    self.assertFalse(line.move_id)
+                    self.assertFalse(line.picking_id)
+                    quants = self.env["stock.quant"].search([
+                        ("product_id", "=", self.product.id), ("location_id", "=", location.id),
+                    ])
+                    self.assertEqual(sum(quants.mapped("quantity")), 0)
+                    self.assertEqual(sum(quants.mapped("reserved_quantity")), 1)
+
+                self.assert_safe_native_defaults(lambda: model.create({
+                    "company_id": self.company.id, "product_id": self.product.id,
+                    "product_uom_id": self.product.uom_id.id, "location_id": location.id,
+                    "location_dest_id": self.customer_location.id, "quantity": 1,
+                }), verify)
+
+    def test_native_receipt_quant_does_not_inherit_unrequested_reserved_defaults(self):
+        for origin in ("context", "ir.default"):
+            with self.subTest(origin=origin):
+                location = self.env["stock.location"].create({
+                    "name": f"Empty receipt default destination {origin}", "usage": "internal",
+                    "company_id": self.company.id, "location_id": self.warehouse_a.view_location_id.id,
+                })
+                picking = self.env["stock.picking"].with_user(self.warehouse).with_company(self.company).create({
+                    "company_id": self.company.id, "picking_type_id": self.warehouse_a.in_type_id.id,
+                    "location_id": self.supplier_location.id, "location_dest_id": location.id,
+                    "move_ids": [Command.create({
+                        "name": "Receipt with bounded native quantity", "company_id": self.company.id,
+                        "product_id": self.product.id, "product_uom": self.product.uom_id.id,
+                        "product_uom_qty": 1, "location_id": self.supplier_location.id,
+                        "location_dest_id": location.id,
+                    })],
+                })
+                picking.move_ids.write({"quantity": 1, "picked": True})
+                if origin == "context":
+                    picking = picking.with_context(default_reserved_quantity=999)
+                else:
+                    self.env["ir.default"].set("stock.quant", "reserved_quantity", 999, user_id=self.warehouse.id)
+
+                def verify(result):
+                    self.assertEqual(picking.state, "done")
+                    quants = self.env["stock.quant"].search([
+                        ("product_id", "=", self.product.id), ("location_id", "=", location.id),
+                    ])
+                    self.assertEqual(sum(quants.mapped("quantity")), 1)
+                    self.assertEqual(sum(quants.mapped("reserved_quantity")), 0)
+
+                self.assert_safe_native_defaults(lambda: picking.button_validate(), verify)
 
     def test_quant_scope_uses_location_company_despite_forged_company_values(self):
         self.assert_blocked_unchanged(lambda: self.env["stock.quant"].with_user(self.warehouse).sudo().create({

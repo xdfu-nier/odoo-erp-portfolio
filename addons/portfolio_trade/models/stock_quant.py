@@ -37,10 +37,18 @@ class StockQuant(models.Model):
 
     @api.model_create_multi
     def create(self, vals_list):
+        vals_list = [dict(values) for values in vals_list]
         names = sorted(QUANT_IDENTITY | {"company_id", "quantity", "reserved_quantity"})
         defaults = self.default_get(names)
         configured = self.env["ir.default"]._get_model_defaults(self._name)
         for values in vals_list:
+            native_create = _native_quant_allowed(self, values, creating=True)
+            if native_create:
+                # The exact updater capability authorizes its explicit delta
+                # only. Initialize the other physical column before ORM can
+                # inject context/ir.default values into this NEW quant.
+                values.setdefault("quantity", 0)
+                values.setdefault("reserved_quantity", 0)
             effective = {**defaults, **values}
             companies = companies_for(self, effective)
             if not controlled(companies):
@@ -49,7 +57,7 @@ class StockQuant(models.Model):
             raw_fields = {"quantity", "reserved_quantity"}
             supplied = raw_fields.intersection(values) | raw_fields.intersection(configured)
             supplied |= {name for name in raw_fields if f"default_{name}" in self.env.context}
-            if supplied and not _native_quant_allowed(self, values, creating=True):
+            if supplied and not native_create:
                 raise UserError(_("Physical stock quantities are maintained by native stock operations."))
         return super().create(vals_list)
 
