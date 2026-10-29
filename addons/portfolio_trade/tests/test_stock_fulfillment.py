@@ -326,6 +326,90 @@ class TestStockFulfillment(TransactionCase):
         self.assertFalse(pickings.filtered(lambda picking: picking.state == "done"))
         self.assertEqual(self.stock(), 40)
 
+    def test_multicompany_batch_cannot_validate_a_move_against_another_company_sales_line(self):
+        self.other_company.portfolio_fulfillment_enabled = True
+        source = self.make_sale(
+            quantity=1, company_id=self.other_company.id, warehouse_id=self.warehouse_b.id,
+        )
+        source.action_confirm()
+        legitimate = source.picking_ids
+        forged = self.env["stock.picking"].with_user(self.warehouse).with_company(self.company).create({
+            "company_id": self.company.id, "picking_type_id": self.warehouse_a.out_type_id.id,
+            "location_id": self.location.id, "location_dest_id": self.customer_location.id,
+            "move_ids": [Command.create({
+                "name": "Company A stock with company B sales provenance", "company_id": self.company.id,
+                "product_id": self.product.id, "product_uom": self.product.uom_id.id,
+                "product_uom_qty": 1, "location_id": self.location.id,
+                "location_dest_id": self.customer_location.id,
+            })],
+        })
+        pickings = (forged | legitimate).with_user(self.warehouse).with_context(
+            allowed_company_ids=self.companies.ids,
+        )
+        # Prepare ordinary native inputs before attaching the bad provenance;
+        # quantity inverses legitimately touch individual move lines.
+        pickings.move_ids.write({"quantity": 1, "picked": True})
+        # Model an existing native relation from before policy activation. The
+        # completion gate must still validate each move's actual source company.
+        self.companies.write({"portfolio_fulfillment_enabled": False})
+        pickings.move_ids.write({"sale_line_id": source.order_line.id})
+        self.companies.write({"portfolio_fulfillment_enabled": True})
+        self.assertEqual(set(pickings.company_id.ids), set(self.companies.ids))
+        self.assertEqual(forged.move_ids.sale_line_id.order_id.company_id, self.other_company)
+        self.assertEqual(source.order_line.qty_delivered, 0)
+        self.assert_blocked_unchanged(lambda: pickings.button_validate())
+        self.assertFalse(pickings.filtered(lambda picking: picking.state == "done"))
+        self.assertEqual(self.stock(), 40)
+        self.assertEqual(self.stock(self.other_location), 40)
+        self.assertEqual(source.order_line.qty_delivered, 0)
+
+    def test_pending_move_cannot_attach_a_foreign_enabled_sales_source(self):
+        self.other_company.portfolio_fulfillment_enabled = True
+        source = self.make_sale(
+            quantity=1, company_id=self.other_company.id, warehouse_id=self.warehouse_b.id,
+        )
+        source.action_confirm()
+        for stock_policy in (True, False):
+            self.company.portfolio_fulfillment_enabled = stock_policy
+            with self.subTest(stock_company_enabled=stock_policy, origin="write"):
+                move = self.move()
+                self.assertFalse(move.sale_line_id)
+                self.assert_blocked_unchanged(lambda: move.write({"sale_line_id": source.order_line.id}))
+                self.assertFalse(move.sale_line_id)
+            for origin in ("context", "ir.default"):
+                with self.subTest(stock_company_enabled=stock_policy, origin=origin):
+                    model = self.env["stock.move"].with_user(self.warehouse).with_company(self.company)
+                    if origin == "context":
+                        model = model.with_context(default_sale_line_id=source.order_line.id)
+                    else:
+                        self.env["ir.default"].set("stock.move", "sale_line_id", source.order_line.id, user_id=self.warehouse.id)
+                    try:
+                        self.assert_blocked_unchanged(lambda: model.create({
+                            "name": "Foreign sales source from effective default", "company_id": self.company.id,
+                            "product_id": self.product.id, "product_uom": self.product.uom_id.id,
+                            "product_uom_qty": 1, "location_id": self.location.id,
+                            "location_dest_id": self.customer_location.id,
+                        }))
+                    finally:
+                        if origin == "ir.default":
+                            self.env["ir.default"].set("stock.move", "sale_line_id", False, user_id=self.warehouse.id)
+
+    def test_legitimate_multicompany_batch_preserves_each_move_sales_source(self):
+        self.other_company.portfolio_fulfillment_enabled = True
+        source_a = self.make_sale(quantity=1)
+        source_b = self.make_sale(
+            quantity=1, company_id=self.other_company.id, warehouse_id=self.warehouse_b.id,
+        )
+        (source_a | source_b).action_confirm()
+        pickings = (source_a.picking_ids | source_b.picking_ids).with_user(self.warehouse)
+        pickings.move_ids.write({"quantity": 1, "picked": True})
+        pickings.button_validate()
+        self.assertTrue(all(picking.state == "done" for picking in pickings))
+        self.assertEqual(self.stock(), 39)
+        self.assertEqual(self.stock(self.other_location), 39)
+        self.assertEqual(source_a.order_line.qty_delivered, 1)
+        self.assertEqual(source_b.order_line.qty_delivered, 1)
+
     def test_multiple_lines_cannot_each_spend_the_same_stock(self):
         move = self.move(quantity=42)
         move.move_line_ids.unlink()
@@ -691,6 +775,39 @@ class TestStockFulfillment(TransactionCase):
         self.assertFalse(source.picking_ids.filtered(lambda item: item.state == "done"))
         self.assert_blocked_unchanged(lambda: source.action_draft())
         self.assertEqual(source.state, "cancel")
+
+    def test_canceled_executed_sale_cannot_delete_its_completed_stock_source(self):
+        source = self.make_sale(quantity=1)
+        source.action_confirm()
+        line = source.order_line
+        picking = source.picking_ids
+        self.validate(picking, 1)
+        moves = picking.move_ids
+        source.with_context(disable_cancel_warning=True).action_cancel()
+        self.assertEqual(source.state, "cancel")
+        self.assertFalse(source.sudo().portfolio_purchase_ids)
+        self.assertFalse(source.sudo().portfolio_approval_history_ids)
+        self.assertEqual(moves.state, "done")
+        self.assertEqual(moves.sale_line_id, line)
+        manager_source = source.with_user(self.reviewer)
+        manager_source.check_access("unlink")
+        self.assert_blocked_unchanged(lambda: manager_source.unlink())
+        self.assertTrue(source.exists())
+        self.assertTrue(line.exists())
+        self.assertEqual(moves.sale_line_id, line)
+        self.assertEqual(moves.state, "done")
+
+    def test_manager_can_delete_an_unexecuted_canceled_sale(self):
+        source = self.make_sale(quantity=1)
+        source.action_confirm()
+        line = source.order_line
+        source.with_context(disable_cancel_warning=True).action_cancel()
+        manager_source = source.with_user(self.reviewer)
+        manager_source.check_access("unlink")
+        manager_source.unlink()
+        self.assertFalse(source.exists())
+        self.assertFalse(line.exists())
+        self.assertEqual(self.stock(), 40)
 
     def test_physical_delivered_quantity_and_method_are_not_public_inputs(self):
         line = self.source.order_line

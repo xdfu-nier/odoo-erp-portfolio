@@ -83,6 +83,15 @@ class SaleOrder(models.Model):
                 raise UserError(_("Executed orders cannot reopen; use returns and credit notes."))
         return super().action_draft()
 
+    def unlink(self):
+        enabled = self.filtered(lambda order: order.company_id.portfolio_fulfillment_enabled)
+        if enabled:
+            _require_sales(self, self.company_id, "unlink")
+            self._portfolio_lock()
+            if any(order._portfolio_has_execution() for order in enabled):
+                raise UserError(_("Executed sales sources cannot be deleted; retain their stock and invoice history."))
+        return super().unlink()
+
 
 class SaleOrderLine(models.Model):
     _inherit = "sale.order.line"

@@ -36,7 +36,7 @@ def _guard_mutation(records, values, facts, deleting=False):
         return
     if physical_capability(records, companies):
         return
-    lock_stock(records, companies)
+    lock_stock(records, companies, values)
     if deleting or facts.intersection(values):
         if any(record.state == "done" for record in records):
             raise UserError(_("Completed stock facts are immutable. Use a standard return or inventory adjustment."))
@@ -54,7 +54,7 @@ def _guard_create(model, values):
     if controlled(companies):
         # Creation is still pending business input, so no warehouse gate is
         # needed; native Sales confirmation must create and reserve stock moves.
-        lock_stock(model, companies)
+        lock_stock(model, companies, candidate)
         if candidate.get("state") == "done":
             raise UserError(_("Create a pending stock operation, then use the standard completion action."))
         move = model.env["stock.move"].browse(candidate.get("move_id") or []).sudo()

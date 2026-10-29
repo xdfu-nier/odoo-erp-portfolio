@@ -11,7 +11,7 @@ _QUANT = contextvars.ContextVar("portfolio_native_quant_update", default=None)
 _ZERO_CLEANUP = contextvars.ContextVar("portfolio_zero_quant_cleanup", default=None)
 
 IDENTITY = {
-    "company_id", "location_id", "location_dest_id", "move_id", "picking_id", "picking_type_id", "quant_id",
+    "company_id", "location_id", "location_dest_id", "move_id", "picking_id", "picking_type_id", "quant_id", "sale_line_id",
 }
 
 
@@ -57,10 +57,13 @@ def companies_for(records, values=None):
         companies |= picking_type.company_id
         quant = env["stock.quant"].browse(values.get("quant_id") or []).sudo()
         locations |= quant.location_id
+        source_line = env["sale.order.line"].browse(values.get("sale_line_id") or []).sudo()
+        companies |= source_line.order_id.company_id
     moves = moves.sudo()
     pickings |= moves.picking_id
     pickings = pickings.sudo()
     companies |= moves.company_id | pickings.company_id | pickings.picking_type_id.company_id
+    companies |= moves.sale_line_id.order_id.company_id
     locations |= moves.location_id | moves.location_dest_id | moves.move_line_ids.location_id | moves.move_line_ids.location_dest_id
     locations |= pickings.location_id | pickings.location_dest_id
     companies |= locations.sudo().company_id
@@ -142,7 +145,7 @@ def include_native_records(records):
             cap.include(records)
 
 
-def lock_stock(records, companies):
+def lock_stock(records, companies, values=None):
     """Company revision first, then bounded read-only SO and native stock locks."""
     companies._portfolio_lock_fulfillment()
     env = records.env
@@ -157,19 +160,42 @@ def lock_stock(records, companies):
     elif records._name == "stock.move.line":
         lines |= records
         moves |= records.move_id
+    if records._name == "stock.move.line" and values:
+        moves |= env["stock.move"].browse(values.get("move_id") or [])
     # Stock company authorization precedes this bounded source identity read.
     # A composite Own Sales + Stock actor needs no sales business write grant.
-    sources = moves.sudo().sale_line_id.order_id
+    source_lines = moves.sudo().sale_line_id
+    if records._name == "stock.move" and values:
+        source_lines |= env["sale.order.line"].browse(values.get("sale_line_id") or []).sudo()
+    sources = source_lines.order_id
     if sources.company_id - companies:
         raise UserError(_("The stock movement and its sales source must share an authorized company."))
     if sources:
         env.cr.execute("SELECT id FROM sale_order WHERE id IN %s ORDER BY id FOR UPDATE", [tuple(sources.ids)])
+        sources.invalidate_recordset(["company_id"])
+        source_lines.invalidate_recordset(["order_id"])
     pickings |= moves.picking_id
     lines |= moves.move_line_ids
     for table, items in (("stock_picking", pickings), ("stock_move", moves), ("stock_move_line", lines)):
         if items:
             env.cr.execute(f"SELECT id FROM {table} WHERE id IN %s ORDER BY id FOR UPDATE", [tuple(items.ids)])
             items.invalidate_recordset()
+    for move in moves.sudo():
+        if move.sale_line_id and move.company_id != move.sale_line_id.order_id.company_id:
+            raise UserError(_("Each stock movement must belong to its sales source company."))
+    if records._name == "stock.move" and values is not None:
+        candidates = list(moves.sudo()) or [None]
+        for move in candidates:
+            source_line = (
+                env["sale.order.line"].browse(values["sale_line_id"] or []).sudo()
+                if "sale_line_id" in values else move.sale_line_id if move else env["sale.order.line"]
+            )
+            company = (
+                env["res.company"].browse(values["company_id"] or [])
+                if "company_id" in values else move.company_id if move else env["res.company"]
+            )
+            if source_line and company != source_line.order_id.company_id:
+                raise UserError(_("Each stock movement must belong to its sales source company."))
 
 
 def check_physical_stock(env, cap):
