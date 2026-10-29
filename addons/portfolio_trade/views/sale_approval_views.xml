@@ -46,6 +46,13 @@
         <field name="inherit_id" ref="base.view_company_form"/>
         <field name="arch" type="xml">
             <xpath expr="//notebook" position="inside">
+                <page string="Industrial Parts Master Data" groups="base.group_system">
+                    <group>
+                        <field name="portfolio_masterdata_enabled"/>
+                    </group>
+                    <p>Validate customer and vendor references, product SKUs, units and stock supplier data
+                    when submitting or confirming sales and confirming purchases.</p>
+                </page>
                 <page string="Sales Approval Policy" groups="base.group_system">
                     <group>
                         <field name="portfolio_approval_enabled"/>

@@ -8,6 +8,9 @@ class ResCompany(models.Model):
     _inherit = "res.company"
 
     portfolio_approval_enabled = fields.Boolean(string="Sales approval policy", default=False)
+    portfolio_masterdata_enabled = fields.Boolean(
+        string="Industrial parts master-data validation", default=False,
+    )
     portfolio_approval_amount = fields.Monetary(
         string="Approval untaxed amount", default=50000, currency_field="currency_id",
     )
@@ -51,11 +54,23 @@ class ResCompany(models.Model):
 
     @api.model_create_multi
     def create(self, vals_list):
+        controlled = {
+            "portfolio_approval_enabled", "portfolio_approval_amount", "portfolio_approval_discount",
+            "portfolio_masterdata_enabled",
+        }
+        defaults = self.env["ir.default"]._get_model_defaults(self._name)
+        if "portfolio_approval_policy_version" in defaults or "default_portfolio_approval_policy_version" in self.env.context:
+            raise AccessError(_("Approval policy versions are maintained by the system."))
+        if not self.env.user.has_group("base.group_system") and (
+            controlled.intersection(defaults)
+            or any(f"default_{key}" in self.env.context for key in controlled)
+        ):
+            raise AccessError(_("Only settings administrators can configure company policies."))
         for values in vals_list:
             self._portfolio_validate_values(values)
             if "portfolio_approval_policy_version" in values:
                 raise AccessError(_("Approval policy versions are maintained by the system."))
-            if any(key.startswith("portfolio_approval_") for key in values):
+            if controlled.intersection(values):
                 if not self.env.user.has_group("base.group_system"):
                     raise AccessError(_("Only settings administrators can configure approval policy."))
         return super().create(vals_list)
@@ -65,7 +80,7 @@ class ResCompany(models.Model):
             raise AccessError(_("Approval policy versions are maintained by the system."))
         policy_fields = {
             "portfolio_approval_enabled", "portfolio_approval_amount", "portfolio_approval_discount",
-            "currency_id",
+            "currency_id", "portfolio_masterdata_enabled",
         }
         if not policy_fields.intersection(values):
             return super().write(values)
@@ -75,7 +90,8 @@ class ResCompany(models.Model):
         self._portfolio_validate_values(values)
         self._portfolio_lock_policy()
         for company in self:
-            super(ResCompany, company).write({
-                **values, "portfolio_approval_policy_version": company.portfolio_approval_policy_version + 1,
-            })
+            updated = dict(values)
+            if (policy_fields - {"portfolio_masterdata_enabled"}).intersection(values):
+                updated["portfolio_approval_policy_version"] = company.portfolio_approval_policy_version + 1
+            super(ResCompany, company).write(updated)
         return True

@@ -251,6 +251,7 @@ class SaleOrder(models.Model):
 
     def action_portfolio_submit(self):
         self._portfolio_lock()
+        self.env["portfolio.master.data"]._validate_orders(self, "customer")
         self._portfolio_mutable()
         for order in self:
             if not order.portfolio_approval_enabled:
@@ -308,6 +309,7 @@ class SaleOrder(models.Model):
 
     def action_confirm(self):
         self._portfolio_lock()
+        self.env["portfolio.master.data"]._validate_orders(self, "customer")
         self._portfolio_check_confirmation()
         for order in self.filtered("portfolio_approval_enabled"):
             if order.user_id != self.env.user:
