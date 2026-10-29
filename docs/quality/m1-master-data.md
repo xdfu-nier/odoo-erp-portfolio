@@ -85,3 +85,18 @@ SKU 歧义夹具改用标准商品创建，明确断言 SKU 相同；跨公司�
 
 本机仍缺可选 pg_trgm 与 PDF 渲染工具；上述测试没有验证 PDF 输出。
 测试执行人统一使用主会话，避免并发升级同一个测试数据库。
+
+## 合并及开发库交接
+
+[PR #9](https://github.com/xdfu-nier/odoo-erp-portfolio/pull/9) 已于 2026-10-29 合并。
+提交 `6298529` 的 `scaffold`、`native-odoo` 检查均通过；原生作业验证全新安装、业务测试、
+两次显式数据准备及输出一致性、真实登录和导航，见[CI运行](https://github.com/xdfu-nier/odoo-erp-portfolio/actions/runs/40804860599)。
+
+本地主分支同步到合并提交 `8b6f9cf` 后，已停止旧服务并实际升级 `odoo_portfolio`。
+最终合并版本的验收 CLI 又在开发库执行两次，输出完全相同：19 个记录标识、库存40、盘点移动1。
+项目内日志为 `.runtime/m1-development-upgrade.log` 和 `m1-development-acceptance-{first,second}.*`。
+
+开发服务已重启到8069端口，模块/导航检查通过。七个生成账号均通过实际HTTP登录验证：
+六个 A 公司账号仅允许 PARTS-A，`other_sales` 仅允许 PARTS-B。
+结果保存在 `.runtime/m1-role-login-verification.json`，无密码、会话Cookie或令牌输出。
+这些是自动化服务检查，不替代浏览器人工业务验收。
