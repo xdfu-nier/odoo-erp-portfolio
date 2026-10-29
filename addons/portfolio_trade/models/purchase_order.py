@@ -49,19 +49,21 @@ class PurchaseOrder(models.Model):
             if self.portfolio_source_sale_id - sources:
                 raise UserError(_("The purchase source changed concurrently. Please retry."))
 
-    def _portfolio_validate_source(self, source, company):
+    def _portfolio_validate_source(self, source, company, require_confirmed=True):
         if not source:
             return
         source = source.with_user(self.env.uid)
         source.check_access("read")
         if source.company_id != company:
             raise UserError(_("The source sales order must belong to the purchase company."))
-        if source.state != "sale":
+        if require_confirmed and source.state != "sale":
             raise UserError(_("The source sales order must be confirmed."))
 
-    def _portfolio_validate_sources(self):
+    def _portfolio_validate_sources(self, require_confirmed=True):
         for order in self:
-            order._portfolio_validate_source(order.portfolio_source_sale_id, order.company_id)
+            order._portfolio_validate_source(
+                order.portfolio_source_sale_id, order.company_id, require_confirmed=require_confirmed,
+            )
 
     def _portfolio_controlled(self):
         return self.filtered(lambda order: (
@@ -113,7 +115,11 @@ class PurchaseOrder(models.Model):
                 raise UserError(_("The purchase source cannot change after submission or confirmation."))
             source = candidate if "portfolio_source_sale_id" in values else order.portfolio_source_sale_id
             company = extra if "company_id" in values else order.company_id
-            order._portfolio_validate_source(source, company)
+            source_changed = "portfolio_source_sale_id" in values and source != order.portfolio_source_sale_id
+            entering_confirmation = values.get("state") in _PROMOTED_STATES and order.state not in ("purchase", "done")
+            order._portfolio_validate_source(
+                source, company, require_confirmed=source_changed or entering_confirmation,
+            )
         if "company_id" in values:
             for order in self:
                 if (
@@ -146,7 +152,9 @@ class PurchaseOrder(models.Model):
 
     def _portfolio_purchase_action(self, states, action, confirmed_only=False):
         self._portfolio_masterdata_lock()
-        self._portfolio_validate_sources()
+        # Closing/reopening an already confirmed PO keeps historical provenance,
+        # even when its source sale has since been canceled.
+        self._portfolio_validate_sources(require_confirmed=not confirmed_only)
         controlled = self._portfolio_controlled()
         if confirmed_only and any(order.state not in ("purchase", "done") for order in controlled):
             raise UserError(_("Confirm the purchase order before locking or unlocking it."))

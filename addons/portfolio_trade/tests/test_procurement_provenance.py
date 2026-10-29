@@ -252,6 +252,37 @@ class TestProcurementProvenance(TransactionCase):
         self.assertEqual(order.state, "to approve")
         self.assertFalse(order.picking_ids)
 
+    def test_confirmed_purchase_lock_unlock_keeps_canceled_source_history(self):
+        self.enable()
+        order = self.purchase(portfolio_source_sale_id=self.source.id)
+        order.button_confirm()
+        self.source.with_context(disable_cancel_warning=True).action_cancel()
+        self.assertEqual(self.source.state, "cancel")
+        self.assertTrue(self.source.with_user(self.buyer).read(["name"]))
+        order.button_done()
+        self.assertEqual(order.state, "done")
+        self.assertEqual(order.portfolio_source_sale_id, self.source)
+        order.button_unlock()
+        self.assertEqual(order.state, "purchase")
+        self.assertEqual(order.portfolio_source_sale_id, self.source)
+
+    def test_disabled_policies_preserve_confirmed_purchase_lock_unlock_history(self):
+        self.enable()
+        order = self.purchase(portfolio_source_sale_id=self.source.id)
+        order.button_confirm()
+        self.source.with_context(disable_cancel_warning=True).action_cancel()
+        self.company.write({
+            "portfolio_fulfillment_enabled": False, "portfolio_masterdata_enabled": False,
+            "portfolio_approval_enabled": False,
+        })
+        self.assertTrue(self.source.with_user(self.buyer).read(["name"]))
+        order.button_done()
+        self.assertEqual(order.state, "done")
+        self.assertEqual(order.portfolio_source_sale_id, self.source)
+        order.button_unlock()
+        self.assertEqual(order.state, "purchase")
+        self.assertEqual(order.portfolio_source_sale_id, self.source)
+
     def test_submitted_and_confirmed_source_cannot_be_changed_or_cleared(self):
         self.enable()
         replacement = self.sale()
