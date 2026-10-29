@@ -4,7 +4,7 @@
 
 工业配件分销需求与方案基线0.1已经确认，M0已通过原生环境安装、模块加载、登录和菜单检查，见[实测记录](docs/quality/m0-verification.md)。M1的报价审批子模块已实现：公司级阈值、禁止自审、负责销售确认、改单失效、不可变审计及并发保护，通过32个真实Odoo测试和独立审查，操作说明见[审批验收记录](docs/quality/m1-sales-approval.md)。
 
-M1主数据任务尚未完成，采购/库存/开票/退货闭环、外部接入和业务追踪仍待开发；浏览器人工验收、备份恢复及性能也未完成。pg_trgm和PDF渲染工具缺项继续跟踪。
+M1现已补齐独立的主数据校验、业务角色及可重复的本地验收数据工具，完整回归通过87个真实Odoo测试，见[主数据验证与操作说明](docs/quality/m1-master-data.md)。采购/库存/开票/退货闭环、外部接入和业务追踪仍待开发；浏览器人工验收、备份恢复及性能也未完成。pg_trgm和PDF渲染工具缺项继续跟踪。
 
 开发按照“案例调研 → 需求评审 → Odoo差异分析 → 分里程碑实现 → 集成测试 → 业务验收 → 发布恢复验证”推进。文档入口见[需求与交付文档](docs/requirements.md)，具体完成条件见[里程碑与流程](docs/delivery/workflow.md)。
 
@@ -49,6 +49,14 @@ PostgreSQL 二进制由 `pgserver` wheel 安装在 `.venv` 中；数据存放在
 .venv/bin/python scripts/manage.py update
 ```
 
+显式准备虚构的工业配件验收数据，再启动服务：
+
+```bash
+.venv/bin/python scripts/prepare_acceptance.py --database odoo_portfolio --allow-local-acceptance
+```
+
+工具创建独立业务角色、客户/供应商、三个商品及40个轴承的标准期初盘点。账号密码仅保存到项目内私有文件 `.runtime/acceptance-accounts.json`。重复执行保留手工编辑，不重复盘点；模块安装不会自动生成这些数据。
+
 VS Code 打开本项目目录，选择 `.venv/bin/python` 后使用 `Odoo: source development` 启动配置。数据库须先完成初始化并保持运行。调试配置需要 VS Code 的 Python Debugger 扩展。
 
 ## 依赖管理
@@ -66,16 +74,16 @@ python3 -X pycache_prefix=.cache/pycache -m unittest discover -s tests -v
 python3 -X pycache_prefix=.cache/pycache -m compileall -q scripts addons tests
 ```
 
-基础检查覆盖项目内路径、仅监听本机、随机凭据、重复初始化保护、非法配置、PostgreSQL二进制及导航验证反例。CI另设原生Odoo作业，安装项目内依赖、初始化真实数据库、运行自定义模块测试并验证登录与菜单。CI作业的实际结果和业务UAT覆盖须分别记录，不能把尚无业务测试的模块标为业务验收完成。
+13个辅助测试覆盖项目内路径、本机配置、私有凭据、重复初始化保护、非法配置、PostgreSQL二进制及导航验证反例。CI另设原生Odoo作业，安装项目内依赖、初始化真实数据库、运行自定义模块测试、连续两次执行验收数据工具并验证登录与菜单。业务测试命令及结果见上述验证记录；CI检查与人工UAT分别记录。
 
 ## 开发顺序
 
 | 里程碑 | 目标 | 完成证据 |
 | --- | --- | --- |
 | M0 | 项目内开发环境可用 | 实际安装、启动、登录及模块安装记录 |
-| M1 | 主数据与报价审批 | 审批子模块已通过32个Odoo测试；主数据准备及完整M1验收未完成 |
+| M1 | 主数据与报价审批 | 主数据、审批、角色及本地验收工具已实现，87个Odoo测试通过；完整人工验收未完成 |
 | M2 | 采购到退货的履约闭环 | 按角色执行分批收发货和发票贷项，数量与金额对平 |
 | M3 | 外部订单接入 | 幂等、并发提交、失败保留和重试恢复测试 |
 | M4 | 发布和恢复 | 新库安装、升级、备份恢复及性能记录 |
 
-真实案例来源与本项目规则在[调研记录](docs/discovery/case-research.md)中区分。14条需求对应[28个验收场景](docs/quality/acceptance.md)，当前均尚未执行业务验收。测试公司、客户及单据使用虚构数据。
+真实案例来源与本项目规则在[调研记录](docs/discovery/case-research.md)中区分。14条需求对应[28个验收场景](docs/quality/acceptance.md)，已验证的自动化子集和未执行的人工验收分别记录。测试公司、客户及单据使用虚构数据。
