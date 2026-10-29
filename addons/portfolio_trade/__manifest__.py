@@ -1,7 +1,7 @@
 {
     "name": "Portfolio Trade / 进销存作品集",
-    "summary": "Company sales approval policy and immutable quotation review history",
-    "version": "18.0.1.1.0",
+    "summary": "Company sales approval, industrial master-data gates and quotation review history",
+    "version": "18.0.1.2.0",
     "category": "Sales/Sales",
     "author": "Fu Xiaoda",
     "license": "LGPL-3",

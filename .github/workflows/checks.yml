@@ -51,6 +51,13 @@ jobs:
             -d odoo_portfolio_m1_test -i portfolio_trade --without-demo=all \
             --test-enable --test-tags /portfolio_trade --stop-after-init \
             --logfile .runtime/ci-business-tests.log
+      - name: Prepare local acceptance data twice
+        run: |
+          .venv/bin/python scripts/prepare_acceptance.py --config .runtime/odoo.conf \
+            --database odoo_portfolio --allow-local-acceptance > .runtime/ci-acceptance-first.json
+          .venv/bin/python scripts/prepare_acceptance.py --config .runtime/odoo.conf \
+            --database odoo_portfolio --allow-local-acceptance > .runtime/ci-acceptance-second.json
+          cmp .runtime/ci-acceptance-first.json .runtime/ci-acceptance-second.json
       - name: Verify real HTTP login and navigation
         run: |
           .venv/bin/python .upstream/odoo/odoo-bin -c .runtime/odoo.conf > .runtime/ci-server.log 2>&1 &
@@ -69,4 +76,5 @@ jobs:
           name: native-odoo-verification
           path: |
             .runtime/ci-*.log
+            .runtime/ci-acceptance-*.json
             .runtime/m0-verification.json
