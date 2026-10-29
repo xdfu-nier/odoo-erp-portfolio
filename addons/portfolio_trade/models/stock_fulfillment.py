@@ -1,5 +1,6 @@
 from odoo import _, api, models
 from odoo.exceptions import AccessError, UserError
+from odoo.tools.float_utils import float_compare
 
 from .stock_policy import (
     companies_for,
@@ -63,6 +64,18 @@ def _guard_create(model, values):
             raise UserError(_("Additional operations cannot be attached to completed stock records."))
 
 
+def _check_line_product(model, values, line=None):
+    move_id = values.get("move_id", line.move_id.id if line else False)
+    product_id = values.get("product_id", line.product_id.id if line else False)
+    if values.get("quant_id"):
+        # Native create/write copies the selected quant's product over the
+        # caller's explicit product, so validate that effective identity too.
+        product_id = model.env["stock.quant"].browse(values["quant_id"]).sudo().product_id.id
+    move = model.env["stock.move"].browse(move_id or []).sudo()
+    if move and move.product_id.id != product_id:
+        raise UserError(_("A move line must use the product of its parent stock movement."))
+
+
 class StockMove(models.Model):
     _inherit = "stock.move"
 
@@ -92,8 +105,18 @@ class StockMoveLine(models.Model):
 
     @api.model_create_multi
     def create(self, vals_list):
+        configured = self.env["ir.default"]._get_model_defaults(self._name)
+        product_defaults = self.default_get(["product_id"])
         for values in vals_list:
             _guard_create(self, values)
+            candidate = {**product_defaults, **effective_values(self, values)}
+            if controlled(companies_for(self, candidate)):
+                if (
+                    "quantity_product_uom" in values or "quantity_product_uom" in configured
+                    or "default_quantity_product_uom" in self.env.context
+                ):
+                    raise UserError(_("The product-unit stock quantity is derived from the native move-line quantity."))
+                _check_line_product(self, candidate)
         lines = super().create(vals_list)
         include_native_records(lines)
         return lines
@@ -101,6 +124,12 @@ class StockMoveLine(models.Model):
     def write(self, values):
         if LINE_FACTS.intersection(values):
             _guard_mutation(self, values, LINE_FACTS)
+            if controlled(companies_for(self, values)):
+                if "quantity_product_uom" in values:
+                    raise UserError(_("The product-unit stock quantity is derived from the native move-line quantity."))
+                if {"product_id", "move_id", "quant_id"}.intersection(values):
+                    for line in self:
+                        _check_line_product(self, values, line)
         return super().write(values)
 
     def unlink(self):
@@ -109,8 +138,22 @@ class StockMoveLine(models.Model):
 
     def _action_done(self):
         companies = companies_for(self)
-        if controlled(companies) and not physical_capability(self, companies):
-            raise AccessError(_("Complete move lines through their parent stock operation."))
+        if controlled(companies):
+            if not physical_capability(self, companies):
+                raise AccessError(_("Complete move lines through their parent stock operation."))
+            # Check actual stored facts immediately before native quant deltas.
+            # A legacy/defaulted computed cache must not replace the canonical
+            # native UoM conversion of quantity for the real line product.
+            fields = ["quantity", "quantity_product_uom", "product_id", "product_uom_id", "move_id"]
+            self.flush_recordset(fields)
+            self.invalidate_recordset(fields)
+            for line in self:
+                _check_line_product(self, {}, line)
+                expected = line.product_uom_id._compute_quantity(
+                    line.quantity, line.product_id.uom_id, rounding_method="HALF-UP",
+                )
+                if float_compare(line.quantity_product_uom, expected, precision_rounding=line.product_id.uom_id.rounding):
+                    raise UserError(_("The move-line stock quantity does not match its native unit conversion."))
         return super()._action_done()
 
 

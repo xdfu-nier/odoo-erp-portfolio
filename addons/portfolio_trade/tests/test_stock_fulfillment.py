@@ -117,7 +117,7 @@ class TestStockFulfillment(TransactionCase):
                 "location_id", "location_dest_id", "picking_id", "sale_line_id", "origin_returned_move_id", "to_refund",
             ]),
             "lines": lines.read([
-                "state", "quantity", "product_id", "product_uom_id", "company_id", "location_id", "location_dest_id",
+                "state", "quantity", "quantity_product_uom", "product_id", "product_uom_id", "company_id", "location_id", "location_dest_id",
                 "lot_id", "package_id", "result_package_id", "owner_id", "move_id", "picking_id",
             ]),
             "pickings": moves.picking_id.sorted("id").read([
@@ -307,6 +307,108 @@ class TestStockFulfillment(TransactionCase):
         self.assert_blocked_unchanged(lambda: self.validate(self.source.picking_ids, None, expect_backorder=True))
         self.assertNotEqual(self.source.picking_ids.state, "done")
         self.assertEqual(self.stock(), 40)
+
+    def test_forged_move_line_base_quantity_cannot_ship_without_moving_physical_stock(self):
+        picking = self.source.picking_ids.with_user(self.warehouse)
+        picking.move_ids.write({"quantity": 41, "picked": True})
+        self.env.flush_all()
+        self.assertEqual(sum(picking.move_line_ids.mapped("quantity_product_uom")), 41)
+        before = self.facts()
+        with self.cr.savepoint():
+            self.env.invalidate_all()
+            try:
+                picking.move_line_ids.write({"quantity_product_uom": 0})
+            except UserError:
+                self.assertEqual(self.facts(), before)
+            else:
+                try:
+                    self.validate(picking, None, expect_backorder=True)
+                except UserError:
+                    self.env.flush_all()
+                    self.env.invalidate_all()
+                    self.assertEqual(self.stock(), 40)
+                    self.assertNotEqual(picking.state, "done")
+                    self.assertEqual(self.source.order_line.qty_delivered, 0)
+                else:
+                    self.fail(
+                        "Forged base quantity completed a delivery: "
+                        f"state={picking.state}, move_quantity={picking.move_ids.quantity}, "
+                        f"delivered={self.source.order_line.qty_delivered}, physical_stock={self.stock()}"
+                    )
+
+    def test_legacy_move_line_base_quantity_is_rechecked_before_native_quant_deltas(self):
+        picking = self.source.picking_ids.with_user(self.warehouse)
+        picking.move_ids.write({"quantity": 41, "picked": True})
+        self.env.flush_all()
+        self.company.portfolio_fulfillment_enabled = False
+        picking.move_line_ids.write({"quantity_product_uom": 0})
+        self.env.flush_all()
+        self.company.portfolio_fulfillment_enabled = True
+        self.assertEqual(sum(picking.move_line_ids.mapped("quantity_product_uom")), 0)
+        self.assert_blocked_unchanged(lambda: self.validate(picking, None, expect_backorder=True))
+        self.assertNotEqual(picking.state, "done")
+        self.assertEqual(self.source.order_line.qty_delivered, 0)
+        self.assertEqual(self.stock(), 40)
+
+    def test_public_move_line_base_quantity_inputs_and_defaults_are_rejected(self):
+        move = self.move()
+        self.assert_blocked_unchanged(lambda: move.move_line_ids.write({"quantity_product_uom": 0}))
+        model = self.env["stock.move.line"].with_user(self.warehouse).with_company(self.company)
+        values = {
+            "company_id": self.company.id, "product_id": self.product.id,
+            "product_uom_id": self.product.uom_id.id, "move_id": move.id,
+            "location_id": self.location.id, "location_dest_id": self.customer_location.id,
+            "quantity": 1,
+        }
+        for origin in ("explicit", "context", "ir.default"):
+            with self.subTest(origin=origin):
+                candidate = model
+                extra = {}
+                if origin == "explicit":
+                    extra["quantity_product_uom"] = 0
+                elif origin == "context":
+                    candidate = model.with_context(default_quantity_product_uom=0)
+                else:
+                    self.env["ir.default"].set("stock.move.line", "quantity_product_uom", 0, user_id=self.warehouse.id)
+                self.assert_blocked_unchanged(lambda: candidate.create({**values, **extra}))
+
+    def test_move_line_cannot_fulfill_sales_product_by_consuming_a_different_product(self):
+        other = self.new_product(name="Different physical bearing", default_code="PHYS-DIFFERENT")
+        quant = self.env["stock.quant"].with_user(self.warehouse).with_company(self.company).with_context(
+            inventory_mode=True,
+        ).create({"product_id": other.id, "location_id": self.location.id, "inventory_quantity": 1})
+        quant.action_apply_inventory()
+        picking = self.source.picking_ids.with_user(self.warehouse)
+        picking.move_line_ids.unlink()
+        picking.move_ids.write({"picked": True})
+        before = self.facts()
+        with self.cr.savepoint():
+            self.env.invalidate_all()
+            try:
+                self.env["stock.move.line"].with_user(self.warehouse).create({
+                    "move_id": picking.move_ids.id, "picking_id": picking.id,
+                    "product_id": other.id, "product_uom_id": other.uom_id.id,
+                    "location_id": self.location.id, "location_dest_id": self.customer_location.id,
+                    "quantity": 1, "picked": True,
+                })
+            except UserError:
+                self.assertEqual(self.facts(), before)
+            else:
+                try:
+                    self.validate(picking, None, expect_backorder=True)
+                except UserError:
+                    self.env.flush_all()
+                    self.env.invalidate_all()
+                    self.assertNotEqual(picking.state, "done")
+                    self.assertEqual(self.stock(), 40)
+                    self.assertEqual(self.stock(product=other), 1)
+                    self.assertEqual(self.source.order_line.qty_delivered, 0)
+                else:
+                    self.fail(
+                        "A different product fulfilled the sales source: "
+                        f"delivered={self.source.order_line.qty_delivered}, "
+                        f"ordered_product_stock={self.stock()}, other_product_stock={self.stock(product=other)}"
+                    )
 
     def test_public_batch_validation_rolls_back_both_native_backorder_cohorts(self):
         first = self.make_sale(quantity=30)
