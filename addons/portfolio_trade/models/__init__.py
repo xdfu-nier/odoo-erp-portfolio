@@ -1,4 +1,5 @@
 from . import account_fulfillment as account_fulfillment
+from . import fulfillment_trace as fulfillment_trace
 from . import master_data as master_data
 from . import purchase_order as purchase_order
 from . import res_company as res_company
