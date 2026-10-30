@@ -202,6 +202,42 @@ class TestFinanceActions(FulfillmentLedgerCommon):
                 with self.subTest(operation=operation, actor=actor.login):
                     self.assertFalse(model.with_user(actor).has_access(operation))
 
+    def test_service_first_mixed_invoice_opens_credit_for_returned_physical_line(self):
+        service = self.env["product.product"].with_company(self.company).create({
+            "name": "Finance mixed invoice service", "default_code": "FINANCE-MIXED-SVC",
+            "type": "service", "invoice_policy": "order", "taxes_id": [Command.clear()],
+            "property_account_income_id": self.company_data["default_account_revenue"].id,
+        })
+        service_order = self.make_sale(quantity=3, product=service)
+        self.invoice.button_cancel()
+        original = self.make_invoice(70, invoice_line_ids=[
+            Command.create(service_order.order_line._prepare_invoice_line(sequence=1, quantity=3)),
+            Command.create(self.line._prepare_invoice_line(sequence=2, quantity=70)),
+        ])
+        self.assertEqual(original.invoice_line_ids.mapped("product_id"), service | self.product)
+        original.action_post()
+        self.assertEqual(original.state, "posted")
+        self.make_return(10)
+        try:
+            action = self.public_method(original, "action_portfolio_partial_credit")()
+        except UserError as error:
+            self.fail(f"A legitimate service-first mixed invoice must open its physical credit line: {error}")
+        self.assertEqual(action.get("res_model"), "portfolio.partial.credit")
+        model = self.wizard_model()
+        wizard = model.browse(action["res_id"]) if action.get("res_id") else model.with_context(
+            **action.get("context", {}),
+        ).create({})
+        physical = original.invoice_line_ids.filtered(lambda entry: entry.product_id == self.product)
+        self.assertEqual(wizard.original_line_id, physical)
+        self.assertEqual(wizard.available_quantity, 10)
+        wizard.quantity = 10
+        credit = self.action_move(self.public_method(wizard, "action_create_credit")())
+        self.assertEqual(credit.invoice_line_ids.sale_line_ids, self.line)
+        self.assertEqual(credit.invoice_line_ids.product_id, self.product)
+        self.assertEqual(credit.amount_untaxed, 850)
+        credit.action_post()
+        self.assertEqual(credit.state, "posted")
+
     def test_bounded_ten_credit_directly_creates_850_at_exact_original_basis_and_native_posts(self):
         original = self.posted_original()
         self.make_return(10)

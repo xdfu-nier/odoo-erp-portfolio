@@ -153,7 +153,9 @@ class AccountMove(models.Model):
             if original.state != "posted" or original.move_type != "out_invoice":
                 raise UserError(_("Select an original posted customer invoice."))
             entries = original.invoice_line_ids.filtered(
-                lambda line: line.display_type == "product" and line.sale_line_ids,
+                lambda line: line.display_type == "product" and not line.is_downpayment and line.quantity != 0
+                and any(source.product_id.type == "consu" and not source.display_type and not source.is_downpayment
+                        for source in line.sale_line_ids),
             )
             entry, _source = _credit_original(entries[:1])
             view = original.env.ref("portfolio_trade.partial_credit_form")
