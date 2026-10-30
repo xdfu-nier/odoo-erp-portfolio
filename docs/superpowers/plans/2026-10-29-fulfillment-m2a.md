@@ -50,10 +50,10 @@ Files: create focused `models/stock_fulfillment.py`, `tests/test_stock_fulfillme
 
 ## Task 3: Native CI and delivery handoff
 
-- [ ] Keep final runtime policy default off and current19 acceptance identities unchanged; do not enable an incomplete M2 business policy in a rerun of existing seed. Complete finance/trace readiness in later stages before explicit local activation.
-- [ ] Root verifies fresh install/upgrade, all business tests and13 helper tests, Ruff/compile/XML/diff, matching-head native CI and independent reviews.
-- [ ] Record actual partial receiving/delivery quantities, commands, revision/commit and known remaining M2b/M2c work. Update README milestone honestly; do not claim the7650 net posted scenario before accounting exists.
-- [ ] Publish scoped PR for M2a, reference issue#5 without closing it until M2 is complete. After CI succeeds, merge and synchronize exact commit; keep project-local dependencies and native development workflow.
+- [x] Keep final runtime policy default off and current19 acceptance identities unchanged; do not enable an incomplete M2 business policy in a rerun of existing seed. Complete finance/trace readiness in later stages before explicit local activation.
+- [x] Root verifies fresh install/upgrade, all business tests and13 helper tests, Ruff/compile/XML/diff, matching-head native CI and independent reviews.
+- [x] Record actual partial receiving/delivery quantities, commands, revision/commit and known remaining M2b/M2c work. Update README milestone honestly; do not claim the7650 net posted scenario before accounting exists.
+- [x] Publish scoped PR for M2a, reference issue#5 without closing it until M2 is complete. After CI succeeds, merge and synchronize exact commit; keep project-local dependencies and native development workflow.
 
 Native test command pattern (root substitutes only logfile and tag, never credentials):
 
