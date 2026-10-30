@@ -474,3 +474,90 @@ class TestFulfillmentTrace(FulfillmentLedgerCommon):
         with unittest.TestCase.assertRaises(self, AccessError):
             existing.sudo().web_read(specification)
         self.assertEqual(self.business_snapshot(), before)
+
+    def revoke_posted_trace_source(self):
+        self.invoice.action_post()
+        _action, trace = self.trace_action(self.billing)
+        children = trace.line_ids
+        self.assertEqual(trace.posted_signed_amount, 5950)
+        self.assertEqual(len(children), 1)
+        self.assertEqual([record_id for record_id, _name in trace.name_search(args=[("id", "=", trace.id)])], [trace.id])
+        self.assertEqual(trace.search_count([("id", "=", trace.id), ("posted_signed_amount", "=", 5950)]), 1)
+        self.env["ir.rule"].create({
+            "name": "Trace revoke posted source",
+            "model_id": self.env["ir.model"]._get_id("sale.order"),
+            "domain_force": repr([("id", "!=", self.source.id)]),
+        })
+        self.assertFalse(self.source.with_user(self.billing).with_context(
+            allowed_company_ids=self.company.ids,
+        ).has_access("read"))
+        return trace, children
+
+    def test_copy_data_rechecks_revoked_source_for_parent_and_child_snapshots(self):
+        trace, children = self.revoke_posted_trace_source()
+        before = self.business_snapshot()
+        for records in (trace, children):
+            for elevated in (False, True):
+                with self.subTest(model=records._name, elevated=elevated):
+                    target = records.sudo() if elevated else records
+                    with unittest.TestCase.assertRaises(self, AccessError):
+                        target.copy_data()
+        self.assertEqual(self.business_snapshot(), before)
+
+    def test_name_search_does_not_disclose_snapshot_after_source_access_is_revoked(self):
+        trace, _children = self.revoke_posted_trace_source()
+        before = self.business_snapshot()
+        for elevated in (False, True):
+            with self.subTest(elevated=elevated):
+                target = trace.sudo() if elevated else trace
+                try:
+                    result = target.name_search(name="", args=[("id", "=", trace.id)])
+                except AccessError:
+                    continue
+                self.assertEqual(result, [], "Source revocation must also hide the trace display name")
+        self.assertEqual(self.business_snapshot(), before)
+
+    def test_search_count_cannot_probe_financial_snapshot_after_source_access_is_revoked(self):
+        trace, _children = self.revoke_posted_trace_source()
+        before = self.business_snapshot()
+        for elevated in (False, True):
+            for amount in (5950, 5951):
+                with self.subTest(elevated=elevated, amount=amount):
+                    target = trace.sudo() if elevated else trace
+                    try:
+                        count = target.search_count([
+                            ("id", "=", trace.id), ("posted_signed_amount", "=", amount),
+                        ])
+                    except AccessError:
+                        continue
+                    self.assertEqual(count, 0, "Source revocation must prevent financial predicate probes")
+        self.assertEqual(self.business_snapshot(), before)
+
+    def test_return_move_picking_link_rejects_hidden_return_picking(self):
+        returned = self.make_return(10)
+        _action, existing = self.trace_action(self.trace_audit)
+        self.env["ir.rule"].create({
+            "name": "Trace hide return picking",
+            "model_id": self.env["ir.model"]._get_id("stock.picking"),
+            "domain_force": repr([("id", "!=", returned.id)]),
+        })
+        actor_moves = self.env["stock.move"].with_user(self.trace_audit).with_context(
+            allowed_company_ids=self.company.ids,
+        )
+        actor_pickings = self.env["stock.picking"].with_env(actor_moves.env)
+        self.assertTrue(actor_moves.browse(returned.move_ids.ids).has_access("read"))
+        self.assertTrue(actor_moves.browse(self.delivery.move_ids.ids).has_access("read"))
+        self.assertFalse(actor_pickings.browse(returned.id).has_access("read"))
+        self.assertTrue(actor_pickings.browse(self.delivery.id).has_access("read"))
+        before = self.business_snapshot()
+        trace_count = self.env[self.trace_model_name].sudo().search_count([])
+        specification = {"return_move_ids": {"fields": {
+            "picking_id": {"fields": {"display_name": {}}},
+        }}}
+        with unittest.TestCase.assertRaises(self, AccessError):
+            _action, trace = self.trace_action(self.trace_audit)
+            trace.web_read(specification)
+        self.assertEqual(self.env[self.trace_model_name].sudo().search_count([]), trace_count)
+        with unittest.TestCase.assertRaises(self, AccessError):
+            existing.sudo().web_read(specification)
+        self.assertEqual(self.business_snapshot(), before)

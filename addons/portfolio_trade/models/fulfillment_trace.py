@@ -1,6 +1,7 @@
 """Short-lived read-only views of authorized native fulfillment records."""
 from odoo import Command, _, api, fields, models
 from odoo.exceptions import AccessError, UserError
+from odoo.osv import expression
 
 from .financial_policy import _authorized_sources, financial_facts, physical_facts
 from .stock_policy import authorize_companies
@@ -49,7 +50,7 @@ def _readable_documents(records, env, company):
 def _authorize_stock_provenance(records):
     """Authorize the origin links displayed by the trace's native stock lists."""
     relations = {
-        "stock.move": ("origin_returned_move_id",),
+        "stock.move": ("origin_returned_move_id", "picking_id"),
         "stock.picking": ("return_id", "backorder_id"),
     }.get(records._name, ())
     for name in relations:
@@ -64,6 +65,26 @@ def _authorize_stock_provenance(records):
 
 class ReadOnlyTrace:
     """Enforce the actual actor on public snapshot read and mutation paths."""
+
+    @api.model
+    def _search(self, domain, offset=0, limit=None, order=None):
+        actor = _trace_actor(self)
+        native = super(ReadOnlyTrace, actor)
+        # Authorize own/company-scoped candidates before evaluating caller
+        # predicates. Fetch only canonical identities, never financial data.
+        query = native._search([], order="id")
+        candidates = native._fetch_query(query, [actor._fields[name] for name in actor._trace_identity_fields])
+        authorized_ids = []
+        for candidate in candidates:
+            try:
+                candidate._authorize_trace_source()
+            except AccessError:
+                continue
+            authorized_ids.append(candidate.id)
+        return native._search(
+            expression.AND([domain, [("id", "in", authorized_ids)]]),
+            offset=offset, limit=limit, order=order,
+        )
 
     def _authorize_trace_read(self, names=None):
         actor = _trace_actor(self)
@@ -101,6 +122,9 @@ class ReadOnlyTrace:
         actor = self._authorize_trace_read([part for name in fields_to_export for part in name.split("/")])
         return super(ReadOnlyTrace, actor).export_data(fields_to_export)
 
+    def copy_data(self, default=None):
+        raise AccessError(_("Fulfillment trace snapshots cannot be copied. Open a new sales order trace."))
+
     def write(self, values):
         raise AccessError(_("Fulfillment trace snapshots are read-only. Open a new trace to refresh them."))
 
@@ -116,6 +140,7 @@ class FulfillmentTrace(ReadOnlyTrace, models.TransientModel):
     _name = "portfolio.fulfillment.trace"
     _description = "Read-only sales fulfillment trace"
     _rec_name = "sale_order_id"
+    _trace_identity_fields = ("sale_order_id", "company_id", "create_uid")
 
     sale_order_id = fields.Many2one("sale.order", required=True, readonly=True, ondelete="cascade")
     company_id = fields.Many2one("res.company", required=True, readonly=True)
@@ -298,6 +323,7 @@ class FulfillmentTraceLine(ReadOnlyTrace, models.TransientModel):
     _description = "Read-only physical sales source trace"
     _rec_name = "product_id"
     _order = "source_line_id, id"
+    _trace_identity_fields = ("trace_id", "source_line_id", "company_id", "create_uid")
 
     trace_id = fields.Many2one("portfolio.fulfillment.trace", required=True, readonly=True, ondelete="cascade")
     source_line_id = fields.Many2one("sale.order.line", required=True, readonly=True, ondelete="cascade")
