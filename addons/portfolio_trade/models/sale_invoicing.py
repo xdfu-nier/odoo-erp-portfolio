@@ -1,9 +1,9 @@
 """Native Sales invoicing bridge and derived sales invoice cache boundaries."""
-from odoo import _, api, models
+from odoo import _, api, fields, models
 from odoo.exceptions import UserError
 
 from .account_capability import permits_sale_computation, sale_computation
-from .financial_policy import lock_financial, require_billing
+from .financial_policy import _authorized_sources, lock_financial, require_billing
 from .stock_policy import controlled
 
 COUNTERS = {"qty_invoiced", "qty_invoiced_posted", "qty_to_invoice", "invoice_status"}
@@ -11,6 +11,21 @@ COUNTERS = {"qty_invoiced", "qty_invoiced_posted", "qty_to_invoice", "invoice_st
 
 class SaleOrder(models.Model):
     _inherit = "sale.order"
+
+    portfolio_finance_enabled = fields.Boolean(related="company_id.portfolio_fulfillment_enabled")
+
+    def action_portfolio_create_invoice(self):
+        """Use native Sales preparation with the actual Billing actor throughout."""
+        self.ensure_one()
+        with self.env.cr.savepoint():
+            order = self.with_user(self.env.uid)
+            require_billing(order.env, order.sudo().company_id)
+            order.check_access("read")
+            _authorized_sources(order.order_line)
+            order = order.with_context({"allowed_company_ids": order.env.companies.ids})
+            invoices = order._create_invoices().with_user(order.env.uid)
+            invoices.check_access("read")
+            return order.action_view_invoice(invoices=invoices)
 
     def _create_invoices(self, grouped=False, final=False, date=None):
         enabled = self.filtered(lambda order: order.sudo().company_id.portfolio_fulfillment_enabled)

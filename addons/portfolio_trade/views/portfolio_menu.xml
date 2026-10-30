@@ -24,7 +24,7 @@
     </record>
     <menuitem id="menu_portfolio_root" name="Trade Portfolio / 进销存作品集" sequence="10"/>
     <menuitem id="menu_portfolio_sales" name="销售订单" parent="menu_portfolio_root"
-              action="action_portfolio_sales" groups="sales_team.group_sale_salesman" sequence="10"/>
+              action="action_portfolio_sales" groups="sales_team.group_sale_salesman,account.group_account_invoice" sequence="10"/>
     <menuitem id="menu_portfolio_purchases" name="采购订单" parent="menu_portfolio_root"
               action="action_portfolio_purchases" groups="purchase.group_purchase_user" sequence="20"/>
     <menuitem id="menu_portfolio_stock" name="收发货" parent="menu_portfolio_root"

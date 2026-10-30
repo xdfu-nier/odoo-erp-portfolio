@@ -1,5 +1,6 @@
 from . import test_acceptance_data as test_acceptance_data
 from . import test_account_fulfillment as test_account_fulfillment
+from . import test_finance_actions as test_finance_actions
 from . import test_fulfillment_ledger as test_fulfillment_ledger
 from . import test_master_data as test_master_data
 from . import test_procurement_provenance as test_procurement_provenance

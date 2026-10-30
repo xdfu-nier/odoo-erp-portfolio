@@ -9,6 +9,7 @@
     "data": [
         "security/portfolio_security.xml", "security/ir.model.access.csv",
         "views/portfolio_menu.xml", "views/sale_approval_views.xml",
+        "views/finance_actions_views.xml",
     ],
     "application": True,
     "installable": True,
