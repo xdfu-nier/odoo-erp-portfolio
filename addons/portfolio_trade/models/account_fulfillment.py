@@ -264,11 +264,10 @@ def _validate(moves, sources, before=None, posting=False):
         if move.currency_id != move.company_id.currency_id:
             raise UserError(env._("Controlled fulfillment invoices currently require the company currency."))
         for entry in move.line_ids:
-            commercial = entry.sale_line_ids.filtered(
-                lambda source: not source.display_type and source.product_id.type != "combo",
-            )
-            if commercial and entry.display_type != "product":
-                raise UserError(env._("Commercial sales invoice lines must retain their product classification."))
+            for source in entry.sale_line_ids:
+                expected = source.display_type or ("line_section" if source.product_id.type == "combo" else "product")
+                if entry.display_type != expected:
+                    raise UserError(env._("Sales invoice line classification must match every linked sales source."))
         for entry in move.invoice_line_ids.filtered(lambda line: line.display_type == "product"):
             linked = entry.sale_line_ids
             if (len(linked) != 1 or linked.company_id != move.company_id or entry.company_id != move.company_id

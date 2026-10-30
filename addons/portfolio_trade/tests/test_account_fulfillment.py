@@ -559,3 +559,75 @@ class TestAccountFulfillment(FulfillmentLedgerCommon):
         self.assertEqual(invoice.state, "posted")
         self.assertEqual(invoice.amount_untaxed, 85)
         self.assertEqual(sum(invoice.line_ids.mapped("balance")), 0)
+
+    def test_credit_cannot_hide_as_tax_by_replacing_commercial_source_with_section(self):
+        draft = self.env["sale.order"].with_user(self.sales).with_company(self.company).create({
+            "partner_id": self.customer.id, "company_id": self.company.id, "user_id": self.sales.id,
+            "order_line": [Command.create({
+                "display_type": "line_section", "name": "Legitimate draft quotation section",
+            })],
+        })
+        section = draft.order_line
+        self.invoice.action_post()
+        self.make_return(10)
+        credit = self.make_invoice(10, original=self.invoice)
+        commercial = credit.invoice_line_ids
+        self.assertEqual(credit.amount_untaxed, 850)
+        context = {
+            "skip_invoice_sync": True, "skip_invoice_line_sync": True,
+            "check_move_validity": False,
+        }
+
+        def mapping_snapshot():
+            accounting = self.source_creation_snapshot()
+            entries = self.env["account.move.line"].search([("company_id", "=", self.company.id)])
+            rows = tuple((entry.id, entry.display_type, entry.account_id.id, entry.product_id.id,
+                          entry.product_uom_id.id, entry.price_unit, entry.discount, entry.debit,
+                          entry.credit, entry.amount_currency, tuple(entry.tax_ids.ids)) for entry in entries)
+            reserved = self.api("financial_facts")(self.line)[self.line.id]["credit_reserved"]
+            return accounting, rows, reserved
+
+        with self.env.cr.savepoint():
+            before = mapping_snapshot()
+            self.assertEqual(before[2], 10)
+            try:
+                commercial.with_context(**context).write({
+                    "display_type": "tax", "sale_line_ids": [Command.set(section.ids)],
+                })
+            except UserError:
+                self.assertEqual(mapping_snapshot(), before)
+            else:
+                self.env.flush_all()
+                self.env.invalidate_all()
+                reserved = self.api("financial_facts")(self.line)[self.line.id]["credit_reserved"]
+                if commercial.display_type == "product" and commercial.sale_line_ids == self.line and reserved == 10:
+                    self.assertEqual(mapping_snapshot(), before)
+                    return
+                observed = {
+                    "original_source": self.line.id, "replacement_section": section.id,
+                    "classification": commercial.display_type,
+                    "lines": [(entry.id, entry.display_type, entry.quantity, entry.balance,
+                               entry.amount_currency, entry.sale_line_ids.ids) for entry in credit.line_ids],
+                    "balanced": sum(credit.line_ids.mapped("balance")),
+                    "credit_reserved_after_write": reserved,
+                }
+                try:
+                    credit.with_context(**context).action_post()
+                except UserError as error:
+                    observed["post_error"] = str(error)
+                else:
+                    self.env.flush_all()
+                    self.env.invalidate_all()
+                    observed["posted_state"] = credit.state
+                    observed["posted_lines"] = [(entry.id, entry.display_type, entry.quantity,
+                                                 entry.balance, entry.sale_line_ids.ids) for entry in credit.line_ids]
+                try:
+                    second = self.make_invoice(10, original=self.invoice)
+                except UserError as error:
+                    observed["second_claim_error"] = str(error)
+                else:
+                    observed["second_claim"] = (second.id, second.state, second.amount_untaxed)
+                self.env.flush_all()
+                self.env.invalidate_all()
+                observed["credit_reserved_final"] = self.api("financial_facts")(self.line)[self.line.id]["credit_reserved"]
+                self.fail(f"A credit cannot lose its commercial claim through section source replacement: {observed}")
