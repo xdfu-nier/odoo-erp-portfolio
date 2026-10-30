@@ -1,7 +1,7 @@
 {
     "name": "Portfolio Trade / 进销存作品集",
-    "summary": "Company sales approval, industrial master-data gates and quotation review history",
-    "version": "18.0.1.3.0",
+    "summary": "Industrial parts ERP with sales approval, fulfillment and return credits",
+    "version": "18.0.1.4.0",
     "category": "Sales/Sales",
     "author": "Fu Xiaoda",
     "license": "LGPL-3",
