@@ -415,3 +415,62 @@ class TestFulfillmentTrace(FulfillmentLedgerCommon):
         })
         with self.assertRaises(AccessError):
             child.sudo().read(["gross_delivered_qty"])
+
+    def test_nested_return_provenance_rejects_hidden_original_delivery_move(self):
+        returned = self.make_return(10)
+        original_moves = self.delivery.move_ids
+        _action, existing = self.trace_action(self.trace_audit)
+        self.env["ir.rule"].create({
+            "name": "Trace hide original delivery move",
+            "model_id": self.env["ir.model"]._get_id("stock.move"),
+            "domain_force": repr([("id", "not in", original_moves.ids)]),
+        })
+        actor_moves = self.env["stock.move"].with_user(self.trace_audit).with_context(
+            allowed_company_ids=self.company.ids,
+        )
+        self.assertFalse(actor_moves.browse(original_moves.ids).has_access("read"))
+        self.assertTrue(actor_moves.browse(returned.move_ids.ids).has_access("read"))
+        before = self.business_snapshot()
+        trace_count = self.env[self.trace_model_name].sudo().search_count([])
+        specification = {"return_move_ids": {"fields": {
+            "origin_returned_move_id": {"fields": {"display_name": {}}},
+        }}}
+        with unittest.TestCase.assertRaises(self, AccessError):
+            _action, trace = self.trace_action(self.trace_audit)
+            trace.web_read(specification)
+        self.assertEqual(self.env[self.trace_model_name].sudo().search_count([]), trace_count)
+        with unittest.TestCase.assertRaises(self, AccessError):
+            existing.sudo().web_read(specification)
+        self.assertEqual(self.business_snapshot(), before)
+
+    def test_nested_picking_provenance_rejects_hidden_return_and_backorder_origin(self):
+        returned = self.make_return(10)
+        _action, existing = self.trace_action(self.trace_audit)
+        self.env["ir.rule"].create({
+            "name": "Trace hide original delivery picking",
+            "model_id": self.env["ir.model"]._get_id("stock.picking"),
+            "domain_force": repr([("id", "!=", self.delivery.id)]),
+        })
+        actor_pickings = self.env["stock.picking"].with_user(self.trace_audit).with_context(
+            allowed_company_ids=self.company.ids,
+        )
+        self.assertFalse(actor_pickings.browse(self.delivery.id).has_access("read"))
+        self.assertTrue(actor_pickings.browse(returned.id).has_access("read"))
+        self.assertTrue(actor_pickings.browse(self.delivery_backorder.id).has_access("read"))
+        before = self.business_snapshot()
+        trace_count = self.env[self.trace_model_name].sudo().search_count([])
+        specification = {
+            "return_picking_ids": {"fields": {
+                "return_id": {"fields": {"display_name": {}}},
+            }},
+            "backorder_picking_ids": {"fields": {
+                "backorder_id": {"fields": {"display_name": {}}},
+            }},
+        }
+        with unittest.TestCase.assertRaises(self, AccessError):
+            _action, trace = self.trace_action(self.trace_audit)
+            trace.web_read(specification)
+        self.assertEqual(self.env[self.trace_model_name].sudo().search_count([]), trace_count)
+        with unittest.TestCase.assertRaises(self, AccessError):
+            existing.sudo().web_read(specification)
+        self.assertEqual(self.business_snapshot(), before)

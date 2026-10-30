@@ -46,6 +46,22 @@ def _readable_documents(records, env, company):
     return model.search([("id", "in", records.ids), ("company_id", "=", company.id)], order="id")
 
 
+def _authorize_stock_provenance(records):
+    """Authorize the origin links displayed by the trace's native stock lists."""
+    relations = {
+        "stock.move": ("origin_returned_move_id",),
+        "stock.picking": ("return_id", "backorder_id"),
+    }.get(records._name, ())
+    for name in relations:
+        origins = records.sudo()[name].with_user(records.env.uid)
+        if not origins:
+            continue
+        origins.check_access("read")
+        authorize_companies(origins.company_id)
+        if any(record[name] and record[name].company_id != record.company_id for record in records.sudo()):
+            raise AccessError(_("Stock provenance must belong to the authorized document company."))
+
+
 class ReadOnlyTrace:
     """Enforce the actual actor on public snapshot read and mutation paths."""
 
@@ -148,6 +164,7 @@ class FulfillmentTrace(ReadOnlyTrace, models.TransientModel):
                     documents.check_access("read")
                     if documents.company_id - order.company_id:
                         raise AccessError(_("Trace documents must belong to the authorized source company."))
+                    _authorize_stock_provenance(documents)
 
     @api.model
     def _snapshot(self, sale_order_id):
@@ -193,7 +210,9 @@ class FulfillmentTrace(ReadOnlyTrace, models.TransientModel):
             "return_picking_ids": returns.picking_id, "return_move_ids": returns,
         }
         for name, records in documents.items():
-            values[name] = [Command.set(_readable_documents(records, env, company).ids)]
+            readable = _readable_documents(records, env, company)
+            _authorize_stock_provenance(readable)
+            values[name] = [Command.set(readable.ids)]
 
         if env.user.has_group(BILLING):
             # Billing and every discovered native record/source are authorized
