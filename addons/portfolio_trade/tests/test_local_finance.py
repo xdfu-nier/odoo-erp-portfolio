@@ -192,6 +192,32 @@ class TestLocalFinance(TransactionCase):
         for secret in ("password", "dsn", "db_host", "db_user", "config", "credentials"):
             self.assertNotIn(secret, text)
 
+    def test_missing_installed_trace_view_is_rejected_despite_loaded_python(self):
+        for options in ({"check_only": True}, {}, {"enable_fulfillment": True}):
+            with self.subTest(options=options), self.mutation():
+                marker = self.env["ir.model.data"].search([
+                    ("module", "=", "portfolio_trade"), ("name", "=", "fulfillment_trace_form"),
+                ])
+                self.assertEqual(len(marker), 1)
+                view = self.env["ir.ui.view"].browse(marker.res_id)
+                marker.unlink()
+                self.assertTrue(view.exists())
+                self.assertIn("portfolio.fulfillment.trace", self.env.registry.models)
+                self.assertTrue(callable(getattr(self.local_env["sale.order"], "action_portfolio_trace", None)))
+                self.assert_atomic_denied(lambda: self.prepare(**options))
+
+    def test_outdated_persisted_module_version_requires_upgrade(self):
+        module = self.env["ir.module.module"].search([("name", "=", "portfolio_trade")])
+        source_version = module.installed_version
+        self.assertNotEqual(source_version, "18.0.1.3.0")
+        for options in ({"check_only": True}, {}, {"enable_fulfillment": True}):
+            with self.subTest(options=options), self.mutation():
+                module.write({"latest_version": "18.0.1.3.0"})
+                self.assertEqual(module.latest_version, "18.0.1.3.0")
+                self.assertEqual(module.installed_version, source_version)
+                self.assertTrue(callable(getattr(self.local_env["sale.order"], "action_portfolio_trace", None)))
+                self.assert_atomic_denied(lambda: self.prepare(**options))
+
     def test_check_missing_profile_reports_six_keys_without_writes(self):
         before = self.live_snapshot()
         result = self.prepare(check_only=True)

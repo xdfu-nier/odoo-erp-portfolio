@@ -194,17 +194,49 @@ def _create_finance(env, acceptance):
     return finance
 
 
-def _prepare(env, *, check_only, enable_fulfillment):
+def _installed_readiness(env):
     module = env["ir.module.module"].sudo().search([("name", "=", "portfolio_trade")])
-    if len(module) != 1 or module.state != "installed" or not module.installed_version.startswith("18.0."):
-        _conflict("the Odoo18 portfolio_trade addon must be installed.")
+    if (
+        len(module) != 1 or module.state != "installed"
+        or not module.installed_version or not module.installed_version.startswith("18.0.")
+        or module.latest_version != module.installed_version
+    ):
+        _conflict("the installed Odoo18 addon must match its source version; run a native portfolio_trade upgrade.")
+    trace_models = ("portfolio.fulfillment.trace", "portfolio.fulfillment.trace.line")
     if (
         not callable(getattr(env["sale.order"], "action_portfolio_create_invoice", None))
         or not callable(getattr(env["sale.order"], "action_portfolio_trace", None))
-        or "portfolio.fulfillment.trace" not in env.registry.models
+        or any(model not in env.registry.models for model in trace_models)
         or "portfolio.partial.credit" not in env.registry.models
     ):
-        _conflict("the installed addon is missing its finance or fulfillment trace APIs.")
+        _conflict("finance or trace APIs are missing; run a native portfolio_trade upgrade.")
+    markers = env["ir.model.data"].sudo()
+    for name in trace_models:
+        marker = markers.search([
+            ("module", "=", "portfolio_trade"), ("name", "=", f"model_{name.replace('.', '_')}"),
+        ])
+        metadata = env["ir.model"].sudo().browse(marker.res_id).exists() if len(marker) == 1 and marker.model == "ir.model" else env["ir.model"]
+        if not metadata or metadata.model != name or metadata.state != "base":
+            _conflict("installed trace model metadata is missing or invalid; run a native portfolio_trade upgrade.")
+    marker = markers.search([("module", "=", "portfolio_trade"), ("name", "=", "fulfillment_trace_form")])
+    view = env["ir.ui.view"].sudo().browse(marker.res_id).exists() if len(marker) == 1 and marker.model == "ir.ui.view" else env["ir.ui.view"]
+    if not view or view.model != trace_models[0] or view.type != "form" or not view.active:
+        _conflict("the installed trace form is missing or invalid; run a native portfolio_trade upgrade.")
+    # Python models load at normal startup even when an addon was not upgraded.
+    # Read only PostgreSQL's technical catalog, never query a possibly absent
+    # business table or attempt schema creation from this explicit helper.
+    env.cr.execute(
+        "SELECT count(*) FROM pg_class "
+        "WHERE oid IN (to_regclass(%s), to_regclass(%s)) AND relkind IN ('r', 'p')",
+        [env[name]._table for name in trace_models],
+    )
+    if env.cr.fetchone()[0] != len(trace_models):
+        _conflict("installed trace tables are missing; run a native portfolio_trade upgrade.")
+    return module
+
+
+def _prepare(env, *, check_only, enable_fulfillment):
+    module = _installed_readiness(env)
     acceptance = _acceptance_preflight(env)
     company, other = acceptance["company_a"], acceptance["company_b"]
     actor = env["res.users"].with_user(env.uid).env.user
