@@ -67,8 +67,8 @@ self.assertEqual(financial_facts(lines)[line.id]["invoice_posted"], 0.0)
 
 ## Task 4: Scoped delivery and M2c handoff
 
-- [ ] Keep the existing19 acceptance identities and initial40 inventory evidence untouched. M2b does not auto-enable the policy or initialize developer finance accounts; M2c provides explicit preflighted local preparation and full trace/browser verification.
-- [ ] Record exact tested code revision, real test counts/commands, concurrency observations and remaining M2c work. Update README truthfully. No resume employment or impact metrics are fabricated.
-- [ ] Create scoped PR referencing #5 without closing the full M2 issue. Require matching-head scaffold/native CI success and downloaded verification artifact with exact test counts before merge; synchronize exact signed main merge and upgrade the project-local developer environment.
+- [x] Keep the existing19 acceptance identities and initial40 inventory evidence untouched. M2b does not auto-enable the policy or initialize developer finance accounts; M2c provides explicit preflighted local preparation and full trace/browser verification.
+- [x] Record exact tested code revision, real test counts/commands, concurrency observations and remaining M2c work. Update README truthfully. No resume employment or impact metrics are fabricated.
+- [x] Create scoped PR referencing #5 without closing the full M2 issue. Require matching-head scaffold/native CI success and downloaded verification artifact with exact test counts before merge; synchronize exact signed main merge and upgrade the project-local developer environment. PR11 merged to1444c44, matching-head CI337 and six downloaded reports verified; native developer1.4.0 upgrade, unchanged19 identities/40 stock and seven role logins passed.
 
 Root native command uses the new worktree's absolute addons path, project main config, database `odoo_portfolio_m1_test`, port8077, `--without-demo=all --test-enable --test-tags /portfolio_trade --stop-after-init`; every run writes a unique worktree-local `.runtime/` log. Never print configuration, password files, tokens or cookies.
