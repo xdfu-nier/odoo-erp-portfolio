@@ -52,6 +52,12 @@ Odoo断言辅助函数不接受异常元组；实际失败为来源行被读取�
 最终规格及独立代码质量复核均通过 `a787d561bae208e94ffbfbae48149aef98002ef3`，无待修复Critical或Important项。
 查询会先扫描调用者的短期快照身份再校验来源；成本与其快照数相关，后续性能阶段保留实测。
 
+追踪检查点文档提交 `4420a0fa867b5a3ae271ffb56244f1b71b6d2e27` 已发布到[草稿PR #12](https://github.com/xdfu-nier/odoo-erp-portfolio/pull/12)。
+该提交的push及PR检查通过；PR运行 [41033814151](https://github.com/xdfu-nier/odoo-erp-portfolio/actions/runs/41033814151) 的6份白名单报告已实际下载核对。
+Linux原生结果 **367项，0 failed，0 errors**：`2026-10-30 09:32:59 UTC`，95.08秒、229,223次查询。
+两次初始化摘要逐字相同，19身份、40件库存及1次期初盘点保留；登录HTTP200、认证/模块读取和4个业务模型导航通过，固定源码版本一致。
+报告保存在主项目 `.runtime/m2c-trace-ci/`。PR保持草稿，后续会计准备、完整角色链路及页面核对未据此宣称完成。
+
 在项目根目录、已初始化独立回归库的前提下复现完整回归：
 
 ```bash
