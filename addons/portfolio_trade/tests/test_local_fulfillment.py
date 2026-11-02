@@ -313,6 +313,29 @@ class TestLocalFulfillment(TransactionCase):
         self.assertEqual(self.live_snapshot(), before)
         self.assert_native_completion()
 
+    def test_caller_stock_presentation_context_cannot_change_first_run_or_completed_replay(self):
+        customer_location = self.env.ref("stock.stock_location_customers")
+        product = self.owned("product_bearing").with_company(self.company)
+        filtered = product.with_context(location=customer_location.id)
+        caller = self.local_env(context={"allowed_company_ids": self.company.ids, "location": customer_location.id})
+        self.assertEqual(product.qty_available, 40)
+        self.assertEqual(filtered.qty_available, 0)
+        try:
+            first = self.run_flow(env=caller)
+        except UserError:
+            self.fail("Caller stock presentation context leaked into the first local fulfillment run")
+        self.assert_native_completion()
+        self.assertEqual(product.qty_available, 10)
+        self.assertEqual(filtered.qty_available, 90)
+        before = self.live_snapshot()
+        try:
+            second = self.run_flow(env=caller)
+        except UserError:
+            self.fail("Caller stock presentation context leaked into the completed local fulfillment replay")
+        self.assertEqual(json.dumps(first, sort_keys=True), json.dumps(second, sort_keys=True))
+        self.assertEqual(self.live_snapshot(), before)
+        self.assert_native_completion()
+
     def test_helper_never_commits_the_callers_transaction(self):
         with patch.object(type(self.cr), "commit", side_effect=AssertionError("The caller owns commit")):
             self.run_flow()

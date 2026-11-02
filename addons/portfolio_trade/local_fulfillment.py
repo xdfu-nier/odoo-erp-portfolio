@@ -387,6 +387,9 @@ def run_local_fulfillment(env, *, allow_local=False):
         scoped = env(context={
             "allowed_company_ids": company.ids, "mail_notify_force_send": False,
         })
+        # Keep each metadata record's original uid/elevation, replacing caller
+        # stock filters before reading either initial or completed quantities.
+        acceptance = {key: record.with_context(scoped.context) for key, record in acceptance.items()}
         _validate_roles(acceptance)
         _sender_profile(acceptance)
         finance = _records_for_namespace(scoped, "portfolio_trade_finance", EXPECTED_FINANCE)
