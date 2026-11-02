@@ -6,9 +6,13 @@
 
 M1现已补齐独立的主数据校验、业务角色及可重复的本地验收数据工具，见[主数据验证与操作说明](docs/quality/m1-master-data.md)。M2a实现采购来源追踪、仓库完成权限、分批收发货、实物库存约束及共享库存并发保护，完整回归通过182个真实Odoo测试，见[采购与库存验证记录](docs/quality/m2a-fulfillment.md)。
 
-M2b已合并：真实交付开票额度、实物退货来源、贷项双重额度和原始价格归属，以及纯财务角色开票入口和部分贷项向导。全新安装、1.4.0升级和最终GitHub CI均通过完整337个Odoo测试，独立规格/代码质量审查通过，包含六项真实事务并发竞争；隔离测试中的全角色流程核对库存10、净交付90、真实净过账7650，见[开发与验证记录](docs/quality/m2b-invoice-return.md)及[财务操作说明](docs/quality/m2b-finance-operations.md)。开发环境已升级1.4.0，原19个验收标识、当前库存40及一次期初盘点保持一致，七个角色登录通过，履约策略默认关闭。
+M2b已合并：真实交付开票额度、实物退货来源、贷项双重额度和原始价格归属，以及纯财务角色开票入口和部分贷项向导。全新安装、1.4.0升级和最终GitHub CI均通过完整337个Odoo测试，独立规格/代码质量审查通过，包含六项真实事务并发竞争；隔离测试中的全角色流程核对库存10、净交付90、真实净过账7650，见[开发与验证记录](docs/quality/m2b-invoice-return.md)及[财务操作说明](docs/quality/m2b-finance-operations.md)。M2b交付时已验证开发库1.4.0、原19标识、库存40和一次期初盘点保留，七角色登录通过，履约策略保持关闭。
 
-M2c功能分支已实现按真实来源与角色授权的只读履约追踪，以及显式本地CNY会计准备和实际安装状态预检；392项本地Odoo回归、22项辅助测试和独立规格/质量审查通过，见[追踪记录](docs/quality/m2c-fulfillment-trace.md)及[会计准备记录](docs/quality/m2c-finance-preflight.md)。追踪检查点另有367项GitHub CI通过证据。完整角色业务链路及页面核对继续开发，开发库尚未启用履约；外部接入、人工业务验收、备份恢复及性能尚未完成，pg_trgm和PDF渲染工具缺项继续跟踪。
+M2c已补齐只读履约追踪、本地CNY会计准备、真实角色业务链路及七角色HTTP/浏览器核对。模块1.5.0通过412项本地Odoo测试、55项辅助测试、21项Node测试和独立规格/质量审查，见[页面与开发库验收记录](docs/quality/m2c-role-pages.md)。开发库已显式准备配置并运行两次相同流程，最终库存10、净交付90、实际商品分录净过账7650，原19个标识及40件期初盘点保留，B公司策略不变。匹配提交的CI和合并状态见[PR #12](https://github.com/xdfu-nier/odoo-erp-portfolio/pull/12)；外部接入、人工UAT、备份恢复与性能尚未完成。
+
+实际财务角色页面：只读销售来源、实物交付与退货、已过账数量和原生单据关联。截图使用虚构验收数据。
+
+![财务角色履约追踪：净交付90，净过账7650](docs/screenshots/finance-fulfillment-trace.png)
 
 开发按照“案例调研 → 需求评审 → Odoo差异分析 → 分里程碑实现 → 集成测试 → 业务验收 → 发布恢复验证”推进。文档入口见[需求与交付文档](docs/requirements.md)，具体完成条件见[里程碑与流程](docs/delivery/workflow.md)。
 
@@ -61,6 +65,18 @@ PostgreSQL 二进制由 `pgserver` wheel 安装在 `.venv` 中；数据存放在
 
 工具创建独立业务角色、客户/供应商、三个商品及40个轴承的标准期初盘点。账号密码仅保存到项目内私有文件 `.runtime/acceptance-accounts.json`。重复执行保留手工编辑，不重复盘点；模块安装不会自动生成这些数据。
 
+模块升级完成后，显式准备CNY会计和站内发件身份，再启用PARTS-A并执行独立验收流程：
+
+```bash
+.venv/bin/python scripts/prepare_local_finance.py --database odoo_portfolio --allow-local-acceptance --check
+.venv/bin/python scripts/prepare_local_finance.py --database odoo_portfolio --allow-local-acceptance
+.venv/bin/python scripts/run_local_fulfillment.py --database odoo_portfolio --allow-local-acceptance --prepare-senders
+.venv/bin/python scripts/prepare_local_finance.py --database odoo_portfolio --allow-local-acceptance --enable-fulfillment
+.venv/bin/python scripts/run_local_fulfillment.py --database odoo_portfolio --allow-local-acceptance
+```
+
+会计与流程使用各自命名空间，未知配置、额外库存历史或已修改的验收单据会被拒绝覆盖。完整流程重复执行只核对原单据，返回相同报告，不重建订单或恢复库存。财务操作和逐角色页面命令见[本地验收指南](docs/quality/m2c-role-pages.md)。应用运行继续使用项目内Python/PostgreSQL；浏览器验收另使用已有Node22和Chrome，不新增npm依赖。
+
 VS Code 打开本项目目录，选择 `.venv/bin/python` 后使用 `Odoo: source development` 启动配置。数据库须先完成初始化并保持运行。调试配置需要 VS Code 的 Python Debugger 扩展。
 
 ## 依赖管理
@@ -74,11 +90,12 @@ VS Code 打开本项目目录，选择 `.venv/bin/python` 后使用 `Odoo: sourc
 ## 当前验证
 
 ```bash
-python3 -X pycache_prefix=.cache/pycache -m unittest discover -s tests -v
-python3 -X pycache_prefix=.cache/pycache -m compileall -q scripts addons tests
+.venv/bin/python -X pycache_prefix=.cache/pycache -m unittest discover -s tests -v
+.venv/bin/python -X pycache_prefix=.cache/pycache -m compileall -q scripts addons tests
+node --test tests/browser_m2c_check.test.js
 ```
 
-13个辅助测试覆盖项目内路径、本机配置、私有凭据、重复初始化保护、非法配置、PostgreSQL二进制及导航验证反例。CI另设原生Odoo作业，安装项目内依赖、初始化真实数据库、运行自定义模块测试、连续两次执行验收数据工具并验证登录与菜单。业务测试命令及结果见上述验证记录；CI检查与人工UAT分别记录。
+55个辅助测试覆盖项目内路径、私有凭据、配置与命令行、幂等准备、HTTP角色证据和输入覆盖保护；21个Node测试覆盖真实渲染证据、字段可见性、菜单切换和原生空状态。CI执行原生Odoo测试、两次M1准备、显式会计/发件配置、两次角色流程及七角色HTTP/浏览器核对，仅上传白名单报告和截图。业务测试命令及结果见上述记录；自动化核对与人工UAT分别记录。
 
 ## 开发顺序
 
@@ -86,7 +103,7 @@ python3 -X pycache_prefix=.cache/pycache -m compileall -q scripts addons tests
 | --- | --- | --- |
 | M0 | 项目内开发环境可用 | 实际安装、启动、登录及模块安装记录 |
 | M1 | 主数据与报价审批 | 主数据、审批、角色及本地验收工具已实现，87个Odoo测试通过；完整人工验收未完成 |
-| M2 | 采购到退货的履约闭环 | M2a/M2b已合并；M2c追踪/本地会计准备分支392项本地测试及独立审查通过；完整角色链路及页面验收开发中 |
+| M2 | 采购到退货的履约闭环 | 412项本地测试、七角色HTTP/浏览器及独立审查通过；CI/交付状态见PR #12 |
 | M3 | 外部订单接入 | 幂等、并发提交、失败保留和重试恢复测试 |
 | M4 | 发布和恢复 | 新库安装、升级、备份恢复及性能记录 |
 
