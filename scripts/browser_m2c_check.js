@@ -239,9 +239,15 @@ function validateListEvidence(key, evidence, inputs, role) {
     return evidence;
   }
   requireEvidence(evidence.columns.includes('name') && !nativeEmptyState(evidence.empty_state));
+  requireEvidence(evidence.column_visibility?.name === true &&
+    Array.isArray(evidence.record_name_visibility) &&
+    evidence.record_name_visibility.length === evidence.record_names.length &&
+    evidence.record_name_visibility.every(value => value === true));
   requireEvidence(expected.every(name => evidence.record_names.includes(name)));
-  if (key === 'stock') requireEvidence(['origin', 'state'].every(name => evidence.columns.includes(name)));
-  if (key === 'invoices') requireEvidence(evidence.columns.includes('move_type') || evidence.columns.includes('invoice_date'));
+  if (key === 'stock') requireEvidence(['origin', 'state'].every(name => evidence.columns.includes(name) &&
+    evidence.column_visibility[name] === true));
+  if (key === 'invoices') requireEvidence(['move_type', 'invoice_date'].some(name => evidence.columns.includes(name) &&
+    evidence.column_visibility[name] === true));
   return evidence;
 }
 
@@ -257,6 +263,8 @@ function validateDomEvidence(role, evidence, inputs) {
   const expectedPageNames = Object.keys(report.documents).filter(key => MODELS[key] === pageModel)
     .map(key => inputs.flow.identities[key].name);
   requireEvidence(Array.isArray(page.record_names) && expectedPageNames.every(name => page.record_names.includes(name)));
+  if (role !== 'other_sales') requireEvidence(Array.isArray(page.record_name_visibility) &&
+    page.record_name_visibility.length === page.record_names.length && page.record_name_visibility.every(value => value === true));
   validateSampleEvidence(page, role);
   const traceAllowed = !['warehouse', 'other_sales'].includes(role);
   if (role === 'other_sales') requireEvidence(page.record_names.length === 0 && page.foreign_source_absent === true &&
@@ -270,9 +278,12 @@ function validateDomEvidence(role, evidence, inputs) {
       trace.source_name === inputs.flow.identities.sale_order.name);
     if (['buyer', 'finance'].includes(role)) requireEvidence(source.readonly === true && source.write_controls.length === 0);
     requireEvidence(Array.isArray(trace.line_rows) && trace.line_rows.length === 1 &&
-      trace.line_rows[0].unit.trim().length > 0 && trace.line_rows[0].product.trim().length > 0);
+      trace.line_rows[0].visible === true && trace.line_rows[0].unit_visible === true &&
+      trace.line_rows[0].product_visible === true && trace.line_rows[0].unit.trim().length > 0 &&
+      trace.line_rows[0].product.trim().length > 0);
     for (const [field, value] of Object.entries(PHYSICAL)) {
-      requireEvidence(numericText(trace.quantities[field]) === value && numericText(trace.line_rows[0][field]) === value);
+      requireEvidence(trace.quantity_visibility?.[field] === true && trace.line_rows[0].quantity_visibility?.[field] === true &&
+        numericText(trace.quantities[field]) === value && numericText(trace.line_rows[0][field]) === value);
     }
     requireEvidence(sameMembers([...new Set(trace.linked_document_names)], [...new Set(expectedTraceNames(role, inputs))]));
     if (role === 'finance') {
@@ -425,6 +436,29 @@ async function login(page, role, options, inputs) {
   return {rendered_form: true, submitted: true, authenticated: true, ...actual};
 }
 
+async function collectValidatedList(page, expression, key, inputs, role, {timeoutMs = 30000, intervalMs = 100} = {}) {
+  requireEvidence(Number.isInteger(timeoutMs) && timeoutMs > 0 && timeoutMs <= 30000 &&
+    Number.isInteger(intervalMs) && intervalMs >= 0 && intervalMs <= 1000);
+  const deadline = Date.now() + timeoutMs;
+  let lastDiagnostics;
+  while (Date.now() <= deadline) {
+    try {
+      const records = await page.evaluate(expression);
+      if (records?.diagnostics) lastDiagnostics = sanitizeDiagnostics(records.diagnostics);
+      const classified = classifyListRows(role === 'other_sales' || records.has_native_sample_data ? records.unfiltered_record_names : records.record_names,
+        records.has_native_sample_data, records.empty_state, role, inputs);
+      return validateListEvidence(key, {...records, ...classified, model: records.model || MENU_MODELS[key],
+        record_name_visibility: classified.has_native_sample_data ? [] : records.record_name_visibility}, inputs, role);
+    } catch {
+      if (Date.now() >= deadline) break;
+      await delay(intervalMs);
+    }
+  }
+  const error = new Error('The rendered target list did not satisfy acceptance before its deadline.');
+  if (lastDiagnostics) error.diagnostics = lastDiagnostics;
+  throw error;
+}
+
 async function menuPage(page, key, menu, options, inputs, role, progress) {
   progress.stage = `custom ${key} rendered list readiness`;
   await page.navigate(`${options.baseUrl}/odoo/action-${menu.action_id}?debug=1`);
@@ -437,17 +471,26 @@ async function menuPage(page, key, menu, options, inputs, role, progress) {
   await page.evaluate(inspect(`const item = [...document.querySelectorAll(${JSON.stringify(selector)})].find(visible); item.click(); return true;`));
   await page.wait(ready);
   progress.stage = `custom ${key} collected native evidence`;
-  const records = await page.evaluate(inspect(`const list = document.querySelector('.o_list_view');
+  return collectValidatedList(page, inspect(`const list = document.querySelector('.o_list_view');
     const empty = document.querySelector('.o_action_manager .o_view_nocontent .o_nocontent_help');
     const root = visible(list) ? list : empty?.closest('.o_action') || empty;
+    const nameCells = [...(root?.querySelectorAll('tr.o_data_row td[name="name"]') || [])];
+    const headers = [...(root?.querySelectorAll('th[data-name]') || [])];
     return {visible: visible(root), menu_label: text([...document.querySelectorAll(${JSON.stringify(selector)})].find(visible)),
-      record_names: [...(root?.querySelectorAll('tr.o_data_row td[name="name"]') || [])].map(text),
-      columns: [...(root?.querySelectorAll('th[data-name]') || [])].map(el => el.dataset.name),
+      record_names: nameCells.filter(visible).map(text), record_name_visibility: nameCells.filter(visible).map(visible),
+      unfiltered_record_names: nameCells.map(text), columns: headers.filter(visible).map(el => el.dataset.name),
+      column_visibility: Object.fromEntries(headers.map(el => [el.dataset.name, visible(el)])),
       has_native_sample_data: !!list?.querySelector('.o_list_table')?.closest('.o_view_sample_data'),
-      empty_state: {visible: visible(empty), selector: '.o_view_nocontent .o_nocontent_help', text: text(empty)}};`));
-  // Check the rendered native list without changing optional-column preferences or groups.
-  const classified = classifyListRows(records.record_names, records.has_native_sample_data, records.empty_state, role, inputs);
-  return validateListEvidence(key, {...records, ...classified, model: MENU_MODELS[key]}, inputs, role);
+      empty_state: {visible: visible(empty), selector: '.o_view_nocontent .o_nocontent_help', text: text(empty)},
+      diagnostics: {document_ready: document.readyState === 'complete',
+        navbar_present: !!document.querySelector('.o_main_navbar'), navbar_visible: visible(document.querySelector('.o_main_navbar')),
+        list_present: !!list, list_visible: visible(list), table_present: !!list?.querySelector('.o_list_table'),
+        table_visible: visible(list?.querySelector('.o_list_table')), row_count: nameCells.length,
+        empty_helper_present: !!empty, empty_helper_visible: visible(empty), empty_help_text_length: text(empty).length,
+        native_columns: headers.map(el => el.dataset.name), visible_native_columns: headers.filter(visible).map(el => el.dataset.name),
+        view_classes: [...document.querySelectorAll('.o_action_manager, .o_action_manager [class]')].flatMap(el => [...el.classList]),
+        visible_menu_xmlids: [...document.querySelectorAll('[data-menu-xmlid]')].filter(visible).map(el => el.dataset.menuXmlid)}};`),
+  key, inputs, role);
 }
 
 async function failureDiagnostics(page) {
@@ -487,10 +530,14 @@ async function sourceAndTrace(page, role, options, inputs, state) {
   await page.wait(inspect('return [...document.querySelectorAll(".modal .o_form_view")].some(form => visible(field(form, "gross_delivered_qty")));'));
   const trace = await page.evaluate(inspect(`const form = [...document.querySelectorAll('.modal .o_form_view')].find(el => visible(field(el, 'gross_delivered_qty')));
     const quantities = Object.fromEntries(${JSON.stringify(Object.keys(PHYSICAL))}.map(name => [name, fieldText(form, name)]));
-    const line_rows = [...field(form, 'line_ids').querySelectorAll('tr.o_data_row')].map(row => ({
+    const quantity_visibility = Object.fromEntries(${JSON.stringify(Object.keys(PHYSICAL))}.map(name => [name, visible(field(form, name))]));
+    const line_rows = [...field(form, 'line_ids').querySelectorAll('tr.o_data_row')].filter(visible).map(row => ({
+      visible: visible(row), product_visible: visible(row.querySelector('td[name="product_id"]')),
+      unit_visible: visible(row.querySelector('td[name="product_uom_id"]')),
       product: text(row.querySelector('td[name="product_id"]')), unit: text(row.querySelector('td[name="product_uom_id"]')),
+      quantity_visibility: Object.fromEntries(${JSON.stringify(Object.keys(PHYSICAL))}.map(name => [name, visible(row.querySelector('td[name="' + name + '"]'))])),
       ...Object.fromEntries(${JSON.stringify(Object.keys(PHYSICAL))}.map(name => [name, text(row.querySelector('td[name="' + name + '"]'))]))}));
-    return {opened_by_click: true, visible: visible(form), source_name: fieldText(form, 'sale_order_id'), quantities, line_rows,
+    return {opened_by_click: true, visible: visible(form), source_name: fieldText(form, 'sale_order_id'), quantities, quantity_visibility, line_rows,
       linked_document_names: [], financial_field_names: [], financial_values: {}};`));
   const documentNames = new Set(), financialNames = new Set();
   const tabs = ['Purchases and receipts', 'Deliveries and backorders', 'Returns', ...(role === 'finance' ? ['Invoices and credits'] : [])];
@@ -538,7 +585,8 @@ async function checkRole(cdp, role, options, inputs, progress) {
       }
     }
     state.page = {visible: primary.visible, model: role === 'warehouse' ? 'stock.picking' : role === 'buyer' ? 'purchase.order' : 'sale.order',
-      menu_labels: labels, record_names: primary.record_names, empty_state: primary.empty_state,
+      menu_labels: labels, record_names: primary.record_names, record_name_visibility: primary.record_name_visibility,
+      empty_state: primary.empty_state,
       has_native_sample_data: primary.has_native_sample_data, sample_row_count: primary.sample_row_count,
       foreign_source_absent: role === 'other_sales' && !Object.values(inputs.flow.identities).some(item => primary.record_names.includes(item.name))};
     if (!['warehouse', 'other_sales'].includes(role)) {
@@ -555,7 +603,8 @@ async function checkRole(cdp, role, options, inputs, progress) {
     safeWrite(path.join(options.outputDir, state.screenshot), Buffer.from(screenshot.data, 'base64'));
     return state;
   } catch (error) {
-    if (page) {
+    if (error.diagnostics) progress.diagnostics = sanitizeDiagnostics(error.diagnostics);
+    else if (page) {
       try { progress.diagnostics = await failureDiagnostics(page); } catch { /* Keep the controlled stage failure. */ }
     }
     throw error;
@@ -640,6 +689,6 @@ async function main(argv = process.argv.slice(2)) {
   }
 }
 
-module.exports = {parseArgs, readInputs, validateRoleReport, classifyListRows, validateListEvidence, validateDomEvidence,
+module.exports = {parseArgs, readInputs, validateRoleReport, classifyListRows, collectValidatedList, validateListEvidence, validateDomEvidence,
   validateBrowserReport, sanitizeDiagnostics, main};
 if (require.main === module) main().then(status => { process.exitCode = status; });

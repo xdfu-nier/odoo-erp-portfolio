@@ -85,13 +85,18 @@ function dom(role, inputs = fixture()) {
       record_names: role === 'other_sales' ? [] : Object.keys(report.documents)
         .filter(key => inputs.flow.identities[key].model === pageModel)
         .map(key => inputs.flow.identities[key].name), foreign_source_absent: role === 'other_sales',
+      record_name_visibility: Object.keys(report.documents).filter(key =>
+        inputs.flow.identities[key].model === pageModel).map(() => true),
       empty_state: role === 'other_sales' ? {visible: true,
         selector: '.o_view_nocontent .o_nocontent_help', text: 'No data to display'} : null},
     source: traceAllowed ? {visible: true, name: sourceName,
       readonly: ['buyer', 'finance'].includes(role), write_controls: []} : null,
     trace: traceAllowed ? {opened_by_click: true, visible: true, source_name: sourceName,
       quantities: {gross_delivered_qty: '100.00', returned_qty: '10.00', net_delivered_qty: '90.00'},
-      line_rows: [{product: 'Acceptance bearing6205', unit: 'Units',
+      quantity_visibility: {gross_delivered_qty: true, returned_qty: true, net_delivered_qty: true},
+      line_rows: [{product: 'Acceptance bearing6205', unit: 'Units', visible: true,
+        product_visible: true, unit_visible: true,
+        quantity_visibility: {gross_delivered_qty: true, returned_qty: true, net_delivered_qty: true},
         gross_delivered_qty: '100.00', returned_qty: '10.00', net_delivered_qty: '90.00'}],
       linked_document_names: Object.keys(report.documents).filter(key => key !== 'sale_order')
         .map(key => inputs.flow.identities[key].name),
@@ -101,6 +106,14 @@ function dom(role, inputs = fixture()) {
     invoice: role === 'finance' ? {visible: true, model: 'account.move',
       name: inputs.flow.identities.invoice_first.name} : null,
     screenshot: `${role}.png`};
+}
+
+function stockList(inputs = fixture()) {
+  const names = Object.entries(inputs.flow.identities).filter(([, item]) => item.model === 'stock.picking')
+    .map(([, item]) => item.name);
+  return {visible: true, model: 'stock.picking', columns: ['name', 'origin', 'state'],
+    column_visibility: {name: true, origin: true, state: true},
+    record_names: names, record_name_visibility: names.map(() => true)};
 }
 
 test('module import is guarded and does not launch a browser or read credentials', () => {
@@ -231,6 +244,24 @@ test('trace UI must show per-line units and the actual 100 minus 10 equals 90 qu
   }
 });
 
+test('correct trace text cannot satisfy acceptance when units rows or physical quantities are hidden', () => {
+  const verifier = api();
+  const inputs = fixture();
+  for (const role of ['sales', 'buyer', 'finance']) {
+    assert.doesNotThrow(() => verifier.validateDomEvidence(role, dom(role), inputs));
+    for (const mutate of [e => e.trace.line_rows[0].unit_visible = false,
+      e => e.trace.line_rows[0].visible = false, e => e.trace.line_rows[0].product_visible = false,
+      e => e.trace.quantity_visibility.returned_qty = false,
+      e => e.trace.quantity_visibility.net_delivered_qty = false,
+      e => e.trace.line_rows[0].quantity_visibility.gross_delivered_qty = false,
+      e => delete e.trace.line_rows[0].unit_visible]) {
+      const hidden = dom(role);
+      mutate(hidden);
+      assert.throws(() => verifier.validateDomEvidence(role, hidden, inputs));
+    }
+  }
+});
+
 test('nonbilling financial fields must be absent from the DOM including hidden elements', () => {
   const verifier = api();
   for (const role of ['sales', 'manager', 'manager2', 'buyer']) {
@@ -273,9 +304,7 @@ test('native Warehouse stock list uses visible name origin state columns and act
   const verifier = api();
   assert.equal(typeof verifier.validateListEvidence, 'function', 'Native visible-list evidence validator is missing');
   const inputs = fixture();
-  const list = {visible: true, model: 'stock.picking', columns: ['name', 'origin', 'state'],
-    record_names: Object.entries(inputs.flow.identities).filter(([, item]) => item.model === 'stock.picking')
-      .map(([, item]) => item.name)};
+  const list = stockList(inputs);
   assert.equal(list.record_names.length, 5);
   assert.doesNotThrow(() => verifier.validateListEvidence('stock', list, inputs, 'warehouse'));
   for (const mutate of [e => e.model = 'sale.order', e => e.record_names = [],
@@ -284,6 +313,54 @@ test('native Warehouse stock list uses visible name origin state columns and act
     mutate(invalid);
     assert.throws(() => verifier.validateListEvidence('stock', invalid, inputs, 'warehouse'));
   }
+});
+
+test('correct stock column names and record text cannot satisfy acceptance when headers or name cells are hidden', () => {
+  const verifier = api();
+  const inputs = fixture();
+  assert.doesNotThrow(() => verifier.validateListEvidence('stock', stockList(inputs), inputs, 'warehouse'));
+  for (const mutate of [e => e.column_visibility.origin = false, e => e.column_visibility.state = false,
+    e => e.column_visibility.name = false, e => e.record_name_visibility[0] = false,
+    e => delete e.column_visibility, e => delete e.record_name_visibility]) {
+    const hidden = stockList(inputs);
+    mutate(hidden);
+    assert.throws(() => verifier.validateListEvidence('stock', hidden, inputs, 'warehouse'));
+  }
+  const hiddenPage = dom('warehouse');
+  hiddenPage.page.record_name_visibility[0] = false;
+  assert.throws(() => verifier.validateDomEvidence('warehouse', hiddenPage, inputs));
+});
+
+test('bounded list collection retries transitions and returns only the same validated target snapshot', async () => {
+  const verifier = api();
+  assert.equal(typeof verifier.collectValidatedList, 'function', 'Bounded validated-list collection is missing');
+  const inputs = fixture();
+  const target = {...stockList(inputs), has_native_sample_data: false, empty_state: null};
+  const old = {...structuredClone(target), model: 'sale.order', record_names: ['OLD SALES ORDER'],
+    record_name_visibility: [true]};
+  const transition = {...structuredClone(target), visible: false, columns: [], column_visibility: {},
+    record_names: [], record_name_visibility: []};
+  const wrongRecords = {...structuredClone(target), record_names: ['UNRELATED STOCK'], record_name_visibility: [true]};
+  const snapshots = [old, transition, wrongRecords, target];
+  const reads = [];
+  const fakePage = {evaluate: async () => {
+    const snapshot = snapshots.shift();
+    assert.ok(snapshot, 'Collector re-read after finding and validating the target snapshot');
+    reads.push(snapshot);
+    return snapshot;
+  }};
+  const result = await verifier.collectValidatedList(fakePage, 'DOM evidence only', 'stock', inputs, 'warehouse',
+    {timeoutMs: 100, intervalMs: 0});
+  assert.equal(reads.length, 4);
+  assert.deepEqual(result.record_names, target.record_names);
+  assert.deepEqual(result.column_visibility, target.column_visibility);
+  assert.equal(result.visible, true);
+  const hidden = structuredClone(target);
+  hidden.column_visibility.state = false;
+  let attempts = 0;
+  await assert.rejects(() => verifier.collectValidatedList({evaluate: async () => { attempts += 1; return hidden; }},
+    'DOM evidence only', 'stock', inputs, 'warehouse', {timeoutMs: 10, intervalMs: 0}));
+  assert.ok(attempts > 1, 'A hidden persistent target must be retried and ultimately fail');
 });
 
 test('PARTS-B empty Sales list requires a rendered native empty state when there is no header', () => {
