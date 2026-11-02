@@ -15,8 +15,15 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
       - name: Test local runtime configuration
         run: python -X pycache_prefix=.cache/pycache -m unittest discover -s tests -v
+      - name: Test browser evidence contracts with Node built-ins
+        run: |
+          node --test tests/browser_m2c_check.test.js
+          node --check scripts/browser_m2c_check.js
       - name: Compile Python source
         run: python -X pycache_prefix=.cache/pycache -m compileall -q scripts addons tests
 
@@ -32,6 +39,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
       - name: Install project-local tools and locked dependencies
         run: |
           mkdir -p .runtime/tmp
@@ -43,6 +53,7 @@ jobs:
       - name: Verify configuration and bundled binaries
         run: |
           .venv/bin/python -m unittest discover -s tests -v
+          node --test tests/browser_m2c_check.test.js
           .venv/bin/ruff check scripts tests addons
       - name: Initialize real Odoo and run custom integration tests
         run: |
@@ -58,7 +69,24 @@ jobs:
           .venv/bin/python scripts/prepare_acceptance.py --config .runtime/odoo.conf \
             --database odoo_portfolio --allow-local-acceptance > .runtime/ci-acceptance-second.json
           cmp .runtime/ci-acceptance-first.json .runtime/ci-acceptance-second.json
-      - name: Verify real HTTP login and navigation
+      - name: Prepare local finance and senders with fulfillment disabled
+        run: |
+          .venv/bin/python scripts/prepare_local_finance.py --config .runtime/odoo.conf \
+            --database odoo_portfolio --allow-local-acceptance --check > .runtime/ci-finance-check.json
+          .venv/bin/python scripts/prepare_local_finance.py --config .runtime/odoo.conf \
+            --database odoo_portfolio --allow-local-acceptance > .runtime/ci-finance-prepared.json
+          .venv/bin/python scripts/run_local_fulfillment.py --config .runtime/odoo.conf \
+            --database odoo_portfolio --allow-local-acceptance --prepare-senders > .runtime/ci-senders.json
+      - name: Explicitly enable PARTS-A and verify the real-role flow twice
+        run: |
+          .venv/bin/python scripts/prepare_local_finance.py --config .runtime/odoo.conf \
+            --database odoo_portfolio --allow-local-acceptance --enable-fulfillment > .runtime/ci-finance-enabled.json
+          .venv/bin/python scripts/run_local_fulfillment.py --config .runtime/odoo.conf \
+            --database odoo_portfolio --allow-local-acceptance > .runtime/ci-flow-first.json
+          .venv/bin/python scripts/run_local_fulfillment.py --config .runtime/odoo.conf \
+            --database odoo_portfolio --allow-local-acceptance > .runtime/ci-flow-second.json
+          cmp .runtime/ci-flow-first.json .runtime/ci-flow-second.json
+      - name: Verify native HTTP and all seven rendered role pages
         run: |
           .venv/bin/python .upstream/odoo/odoo-bin -c .runtime/odoo.conf > .runtime/ci-server.log 2>&1 &
           odoo_ci_pid=$!
@@ -70,6 +98,16 @@ jobs:
             sleep 2
           done
           .venv/bin/python scripts/verify_native.py
+          .venv/bin/python scripts/verify_m2c_role_flow.py \
+            --base-url http://127.0.0.1:8069 --database odoo_portfolio \
+            --credentials .runtime/acceptance-accounts.json \
+            --acceptance-report .runtime/ci-acceptance-second.json --flow-report .runtime/ci-flow-second.json \
+            --output .runtime/m2c-role-verification.json
+          node scripts/browser_m2c_check.js \
+            --base-url http://127.0.0.1:8069 --database odoo_portfolio \
+            --credentials .runtime/acceptance-accounts.json \
+            --acceptance-report .runtime/ci-acceptance-second.json --flow-report .runtime/ci-flow-second.json \
+            --role-report .runtime/m2c-role-verification.json --output-dir .runtime/m2c-browser
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -77,6 +115,24 @@ jobs:
           include-hidden-files: true
           if-no-files-found: error
           path: |
-            .runtime/ci-*.log
-            .runtime/ci-acceptance-*.json
+            .runtime/ci-init.log
+            .runtime/ci-business-tests.log
+            .runtime/ci-server.log
+            .runtime/ci-acceptance-first.json
+            .runtime/ci-acceptance-second.json
             .runtime/m0-verification.json
+            .runtime/ci-finance-check.json
+            .runtime/ci-finance-prepared.json
+            .runtime/ci-senders.json
+            .runtime/ci-finance-enabled.json
+            .runtime/ci-flow-first.json
+            .runtime/ci-flow-second.json
+            .runtime/m2c-role-verification.json
+            .runtime/m2c-browser/report.json
+            .runtime/m2c-browser/sales.png
+            .runtime/m2c-browser/manager.png
+            .runtime/m2c-browser/manager2.png
+            .runtime/m2c-browser/buyer.png
+            .runtime/m2c-browser/warehouse.png
+            .runtime/m2c-browser/finance.png
+            .runtime/m2c-browser/other_sales.png
