@@ -1,7 +1,7 @@
 {
     "name": "Portfolio Trade / 进销存作品集",
-    "summary": "Industrial parts ERP with sales approval, fulfillment and return credits",
-    "version": "18.0.1.4.0",
+    "summary": "Industrial parts ERP with approval, fulfillment trace and local role acceptance",
+    "version": "18.0.1.5.0",
     "category": "Sales/Sales",
     "author": "Fu Xiaoda",
     "license": "LGPL-3",
