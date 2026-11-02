@@ -459,6 +459,43 @@ test('failure DOM diagnostics whitelist structure and never include credential o
   assert.ok(invalid.view_classes.length <= 20);
 });
 
+test('Chrome startup diagnostics classify bounded stderr without exposing private text paths or environment', () => {
+  const verifier = api();
+  assert.equal(typeof verifier.chromeStartupDiagnostics, 'function', 'Safe Chrome startup diagnostics are missing');
+  const metadata = {stderr: '[ERROR:process_singleton_posix.cc] Failed to bind() /home/PRIVATE-USER/PRIVATE-TOKEN/SingletonSocket: File name too long (36) PRIVATE-PASSWORD',
+    binary: '/home/PRIVATE-USER/bin/google-chrome', exit_code: 21, signal: null,
+    duration_ms: 15125, port_file_present: false, tmpdir_exists: true, debugging_loopback: true,
+    environment: {PRIVATE_SECRET: 'PRIVATE-ENV'}, arguments: ['PRIVATE-ARGUMENT']};
+  const safe = verifier.chromeStartupDiagnostics(metadata);
+  assert.equal(safe.cause, 'singleton_socket_path_too_long');
+  assert.equal(safe.binary_basename, 'google-chrome');
+  assert.equal(safe.exit_code, 21);
+  assert.equal(safe.signal, null);
+  assert.equal(safe.duration_ms, 15125);
+  assert.equal(safe.port_file_present, false);
+  assert.equal(safe.tmpdir_exists, true);
+  assert.equal(safe.debugging_loopback, true);
+  for (const [stderr, cause] of [
+    ['No usable sandbox! PRIVATE-SECRET', 'sandbox'],
+    ['Failed to create shared memory in /dev/shm PRIVATE-SECRET', 'shared_memory'],
+    ['Permission denied PRIVATE-SECRET', 'permission'],
+    ['error while loading shared libraries: PRIVATE-SECRET.so: cannot open shared object file', 'missing_binary_or_library'],
+    ['Unknown startup failure PRIVATE-SECRET', 'unknown'],
+  ]) assert.equal(verifier.chromeStartupDiagnostics({...metadata, stderr}).cause, cause);
+  assert.equal(verifier.chromeStartupDiagnostics({...metadata, stderr: '', timed_out: true}).cause, 'timeout');
+  const bounded = verifier.chromeStartupDiagnostics({...metadata,
+    stderr: 'x'.repeat(16384) + metadata.stderr, binary: '/PRIVATE-PATH/PRIVATE-BINARY', signal: 'PRIVATE-SIGNAL'});
+  assert.equal(bounded.cause, 'unknown');
+  assert.equal(bounded.binary_basename, 'unrecognized');
+  assert.equal(bounded.signal, null);
+  for (const report of [safe, bounded]) {
+    const serialized = JSON.stringify(report).toLowerCase();
+    for (const forbidden of ['private-', '/home', 'stderr', 'environment', 'arguments', 'password', 'token']) {
+      assert.ok(!serialized.includes(forbidden), `Unsafe startup diagnostic ${forbidden}`);
+    }
+  }
+});
+
 test('every role screenshot is a unique safe relative PNG under the chosen runtime output', () => {
   const verifier = api();
   for (const screenshot of ['../sales.png', '/tmp/sales.png', 'file:///tmp/sales.png',

@@ -2,6 +2,7 @@
 
 // Node 22 built-ins and the existing Chrome binary only. No browser packages.
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const childProcess = require('node:child_process');
 
@@ -337,6 +338,27 @@ function sanitizeDiagnostics(raw) {
   return safe;
 }
 
+function chromeStartupDiagnostics(raw = {}) {
+  const stderr = typeof raw.stderr === 'string' ? raw.stderr.slice(0, 8192) : '';
+  let cause = 'unknown';
+  if (/(?:ProcessSingleton|process_singleton|SingletonSocket)/i.test(stderr) &&
+    /(?:File name too long|ENAMETOOLONG|(?:socket|path).*too long)/i.test(stderr)) cause = 'singleton_socket_path_too_long';
+  else if (/(?:No usable sandbox|SUID sandbox|Running as root without --no-sandbox|Failed to move to new namespace)/i.test(stderr)) cause = 'sandbox';
+  else if (/(?:failed|error|cannot|unable|no space).*(?:\/dev\/shm|shared.memory)|(?:\/dev\/shm|shared.memory).*(?:failed|error|cannot|unable|no space)/i.test(stderr)) cause = 'shared_memory';
+  else if (['EACCES', 'EPERM'].includes(raw.spawn_code) || /(?:Permission denied|Operation not permitted|EACCES|EPERM)/i.test(stderr)) cause = 'permission';
+  else if (['ENOENT', 'ENOEXEC'].includes(raw.spawn_code) || /(?:error while loading shared libraries|cannot open shared object file)/i.test(stderr)) cause = 'missing_binary_or_library';
+  else if (raw.timed_out === true) cause = 'timeout';
+  const binary = typeof raw.binary === 'string' ? path.basename(raw.binary) : '';
+  const binaries = ['Google Chrome', 'google-chrome', 'google-chrome-stable', 'chromium', 'chromium-browser'];
+  const signals = ['SIGTERM', 'SIGKILL', 'SIGABRT', 'SIGSEGV', 'SIGBUS', 'SIGILL', 'SIGTRAP', 'SIGSYS', 'SIGHUP', 'SIGINT'];
+  return {cause, binary_basename: binaries.includes(binary) ? binary : 'unrecognized',
+    exit_code: Number.isInteger(raw.exit_code) && raw.exit_code >= 0 && raw.exit_code <= 255 ? raw.exit_code : null,
+    signal: signals.includes(raw.signal) ? raw.signal : null,
+    duration_ms: Number.isFinite(raw.duration_ms) ? Math.max(0, Math.min(120000, Math.floor(raw.duration_ms))) : 0,
+    port_file_present: raw.port_file_present === true, tmpdir_exists: raw.tmpdir_exists === true,
+    debugging_loopback: raw.debugging_loopback === true};
+}
+
 const delay = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
 
 class Cdp {
@@ -632,7 +654,7 @@ function safeWrite(filename, data) {
 
 async function main(argv = process.argv.slice(2)) {
   const progress = {role: 'input', stage: 'validation'};
-  let options, profile, chrome, cdp;
+  let options, profile, chrome, cdp, startup;
   try {
     options = parseArgs(argv);
     const inputs = readInputs(options);
@@ -642,16 +664,23 @@ async function main(argv = process.argv.slice(2)) {
     fs.mkdirSync(options.outputDir, {recursive: true});
     profile = fs.mkdtempSync(path.join(options.outputDir, '.chrome-'));
     progress.stage = 'existing Chrome startup';
+    startup = {binary, started_at: Date.now(), stderr: Buffer.alloc(0)};
     chrome = childProcess.spawn(binary, ['--headless=new', '--no-first-run', '--no-default-browser-check',
       '--disable-background-networking', '--disable-component-update', '--disable-sync', '--disable-extensions',
       '--disable-default-apps', '--metrics-recording-only', '--no-pings', '--no-sandbox',
       '--remote-debugging-address=127.0.0.1', '--remote-debugging-port=0',
-      `--user-data-dir=${profile}`, `--disk-cache-dir=${path.join(profile, 'cache')}`, 'about:blank'], {stdio: 'ignore'});
+      `--user-data-dir=${profile}`, `--disk-cache-dir=${path.join(profile, 'cache')}`, 'about:blank'], {stdio: ['ignore', 'ignore', 'pipe']});
+    chrome.stderr.on('data', chunk => {
+      const remaining = 8192 - startup.stderr.length;
+      if (remaining > 0) startup.stderr = Buffer.concat([startup.stderr, chunk.subarray(0, remaining)]);
+    });
     let failed = false;
-    chrome.on('error', () => { failed = true; });
+    chrome.on('error', error => { failed = true; startup.spawn_code = error.code; });
     const deadline = Date.now() + 15000;
     const portFile = path.join(profile, 'DevToolsActivePort');
+    startup.port_file = portFile;
     while (!fs.existsSync(portFile) && Date.now() < deadline && !failed && chrome.exitCode === null) await delay(100);
+    startup.timed_out = Date.now() >= deadline && !fs.existsSync(portFile);
     requireEvidence(!failed && fs.existsSync(portFile));
     const [port, route] = fs.readFileSync(portFile, 'utf8').trim().split('\n');
     requireEvidence(/^\d+$/.test(port) && /^\/devtools\/browser\/[\w-]+$/.test(route));
@@ -666,8 +695,16 @@ async function main(argv = process.argv.slice(2)) {
     process.stdout.write(JSON.stringify(report, null, 2) + '\n');
     return 0;
   } catch {
+    const startupSafe = startup && progress.stage === 'existing Chrome startup' ? chromeStartupDiagnostics({
+      stderr: startup.stderr.toString('utf8'), binary: startup.binary, spawn_code: startup.spawn_code,
+      exit_code: chrome?.exitCode, signal: chrome?.signalCode, duration_ms: Date.now() - startup.started_at,
+      port_file_present: !!startup.port_file && fs.existsSync(startup.port_file),
+      tmpdir_exists: fs.existsSync(os.tmpdir()), timed_out: startup.timed_out,
+      debugging_loopback: chrome?.spawnargs.includes('--remote-debugging-address=127.0.0.1'),
+    }) : undefined;
     const report = {ok: false, role: progress.role, stage: progress.stage,
       reason: progress.stage.startsWith('existing Chrome') ? 'An existing Chrome binary is required and must start successfully.' : 'Local rendered-browser verification failed.',
+      ...(startupSafe ? {startup_diagnostics: startupSafe} : {}),
       ...(progress.diagnostics ? {diagnostics: sanitizeDiagnostics(progress.diagnostics)} : {})};
     if (profile && options) {
       try { safeWrite(path.join(options.outputDir, 'report.json'), JSON.stringify(report, null, 2) + '\n'); } catch { /* Preserve the safe stdout failure. */ }
@@ -690,5 +727,5 @@ async function main(argv = process.argv.slice(2)) {
 }
 
 module.exports = {parseArgs, readInputs, validateRoleReport, classifyListRows, collectValidatedList, validateListEvidence, validateDomEvidence,
-  validateBrowserReport, sanitizeDiagnostics, main};
+  validateBrowserReport, sanitizeDiagnostics, chromeStartupDiagnostics, main};
 if (require.main === module) main().then(status => { process.exitCode = status; });
