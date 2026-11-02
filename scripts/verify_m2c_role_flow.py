@@ -90,7 +90,7 @@ def runtime_path(path, *, existing=True):
         require(path.is_file(), "An existing regular input file is required.")
     else:
         require(path.parent.is_dir() and (not path.exists() or path.is_file()), "The report destination is invalid.")
-    return path
+    return path.resolve()
 
 
 def read_json(path):

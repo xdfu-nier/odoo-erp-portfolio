@@ -260,6 +260,24 @@ class M2cRoleFlowTests(unittest.TestCase):
             with self.subTest(output=output), self.assertRaises(ValueError):
                 self.load(output_path=output)
 
+    def test_dotdot_input_and_output_aliases_cannot_overwrite_any_private_or_safe_input(self):
+        alias_directory = self.directory / "actual-subdirectory"
+        alias_directory.mkdir()
+        input_keys = {"credentials": "credentials_path", "acceptance": "acceptance_report_path",
+                      "flow": "flow_report_path"}
+        before = {key: self.paths[key].read_bytes() for key in input_keys}
+        with patch("urllib.request.build_opener", side_effect=AssertionError("Aliased outputs must fail before network")), \
+                patch.object(Path, "write_text", side_effect=AssertionError("Input alias validation must never write")):
+            for key, argument in input_keys.items():
+                canonical = self.paths[key]
+                alias = alias_directory / ".." / canonical.name
+                self.assertEqual(alias.resolve(), canonical.resolve())
+                for overrides in ({"output_path": alias}, {argument: alias, "output_path": canonical}):
+                    with self.subTest(input=key, aliased_input=argument in overrides), self.assertRaises(ValueError):
+                        self.load(**overrides)
+                self.assertEqual({name: self.paths[name].read_bytes() for name in input_keys}, before)
+        self.assertFalse(self.paths["output"].exists())
+
     def test_seven_role_report_requires_every_role_and_no_unknown_role(self):
         inputs = self.load()
         evidence = {role: self.evidence(role) for role in ROLES}
