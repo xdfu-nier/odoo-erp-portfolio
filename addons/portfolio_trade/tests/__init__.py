@@ -12,5 +12,6 @@ from . import test_procurement_provenance_concurrency as test_procurement_proven
 from . import test_return_credit as test_return_credit
 from . import test_sale_approval as test_sale_approval
 from . import test_sale_approval_concurrency as test_sale_approval_concurrency
+from . import test_sale_readonly_views as test_sale_readonly_views
 from . import test_stock_fulfillment as test_stock_fulfillment
 from . import test_stock_fulfillment_concurrency as test_stock_fulfillment_concurrency
