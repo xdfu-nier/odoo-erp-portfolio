@@ -113,6 +113,19 @@ node scripts/browser_m2c_check.js \
 
 [销售角色追踪](../screenshots/sales-fulfillment-trace.png) · [财务角色追踪](../screenshots/finance-fulfillment-trace.png)
 
+## 最终CI首轮核对
+
+提交 `48cc251645dc8cbbe4285be3cf88e93fcf52cb2a` 的[PR运行41436452009](https://github.com/xdfu-nier/odoo-erp-portfolio/actions/runs/41436452009)
+基础检查通过，原生作业在Chrome启动阶段失败，未进入浏览器页面检查，因此没有合并。
+已实际下载14份报告核对：**412项Odoo测试，0 failed，0 errors**，`2026-11-02 11:28:21 UTC`，174.18秒、355,644次查询；
+两次流程报告逐字一致，库存10/净交付90/净过账7650，七角色HTTP报告通过。
+原始证据位于主项目 `.runtime/m2c-first-final-ci/`。
+同类项目临时目录在本机仍可完成浏览器验收，尚不凭猜测修改启动环境；先增加不包含原始stderr/环境/路径的Chrome退出与原因类别诊断，再针对CI证据修复。
+诊断提交 `0e69b26d11f967277997a44477c79f25f0de1a10` 仅在内存保留前8192字节stderr并继续排空，
+启动失败时只返回固定原因类别、白名单信号/浏览器名及有界数值/布尔状态，不记录原始输出。
+启动参数、15秒等待和页面断言不变；55项Python、22项Node测试及本机七角色页面复跑通过，独立规格/质量复核通过。
+Linux实际原因等待诊断版本CI核对。
+
 ## 已发布检查点的CI证据
 
 会计准备检查点 `6ca33accbd8d10e285aeb569eb4cea282d34b1a6` 的push与PR工作流成功。
