@@ -1,4 +1,5 @@
 """Native Sales invoicing bridge and derived sales invoice cache boundaries."""
+from lxml import etree
 from odoo import _, api, fields, models
 from odoo.exceptions import UserError
 
@@ -13,6 +14,26 @@ class SaleOrder(models.Model):
     _inherit = "sale.order"
 
     portfolio_finance_enabled = fields.Boolean(related="company_id.portfolio_fulfillment_enabled")
+
+    @api.model
+    def get_view(self, view_id=None, view_type="form", **options):
+        """Keep source sales views read-only for the actual non-Sales actor."""
+        result = super().get_view(view_id=view_id, view_type=view_type, **options)
+        actor = self.with_user(self.env.uid).env.user
+        if view_type not in ("form", "list") or actor.has_group("sales_team.group_sale_salesman"):
+            return result
+        result = dict(result)
+        arch = etree.fromstring(result["arch"].encode())
+        for attribute in ("create", "edit", "delete"):
+            arch.set(attribute, "0")
+        readonly_actions = {
+            "action_portfolio_trace", "action_portfolio_create_invoice", "action_preview_sale_order",
+        }
+        for button in arch.xpath("./header//button"):
+            if button.get("name") not in readonly_actions:
+                button.getparent().remove(button)
+        result["arch"] = etree.tostring(arch, encoding="unicode")
+        return result
 
     def action_portfolio_create_invoice(self):
         """Use native Sales preparation with the actual Billing actor throughout."""

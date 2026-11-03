@@ -3,11 +3,15 @@ from . import test_account_fulfillment as test_account_fulfillment
 from . import test_finance_actions as test_finance_actions
 from . import test_financial_concurrency as test_financial_concurrency
 from . import test_fulfillment_ledger as test_fulfillment_ledger
+from . import test_fulfillment_trace as test_fulfillment_trace
+from . import test_local_finance as test_local_finance
+from . import test_local_fulfillment as test_local_fulfillment
 from . import test_master_data as test_master_data
 from . import test_procurement_provenance as test_procurement_provenance
 from . import test_procurement_provenance_concurrency as test_procurement_provenance_concurrency
 from . import test_return_credit as test_return_credit
 from . import test_sale_approval as test_sale_approval
 from . import test_sale_approval_concurrency as test_sale_approval_concurrency
+from . import test_sale_readonly_views as test_sale_readonly_views
 from . import test_stock_fulfillment as test_stock_fulfillment
 from . import test_stock_fulfillment_concurrency as test_stock_fulfillment_concurrency

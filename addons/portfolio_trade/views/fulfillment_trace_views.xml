@@ -1,0 +1,171 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="access_fulfillment_trace_sales" model="ir.model.access">
+        <field name="name">Sales fulfillment trace</field>
+        <field name="model_id" ref="model_portfolio_fulfillment_trace"/>
+        <field name="group_id" ref="sales_team.group_sale_salesman"/>
+        <field name="perm_read" eval="True"/><field name="perm_create" eval="True"/>
+        <field name="perm_write" eval="False"/><field name="perm_unlink" eval="False"/>
+    </record>
+    <record id="access_fulfillment_trace_purchase" model="ir.model.access">
+        <field name="name">Purchase fulfillment trace</field>
+        <field name="model_id" ref="model_portfolio_fulfillment_trace"/>
+        <field name="group_id" ref="purchase.group_purchase_user"/>
+        <field name="perm_read" eval="True"/><field name="perm_create" eval="True"/>
+        <field name="perm_write" eval="False"/><field name="perm_unlink" eval="False"/>
+    </record>
+    <record id="access_fulfillment_trace_billing" model="ir.model.access">
+        <field name="name">Billing fulfillment trace</field>
+        <field name="model_id" ref="model_portfolio_fulfillment_trace"/>
+        <field name="group_id" ref="account.group_account_invoice"/>
+        <field name="perm_read" eval="True"/><field name="perm_create" eval="True"/>
+        <field name="perm_write" eval="False"/><field name="perm_unlink" eval="False"/>
+    </record>
+    <record id="access_fulfillment_trace_line_sales" model="ir.model.access">
+        <field name="name">Sales fulfillment trace lines</field>
+        <field name="model_id" ref="model_portfolio_fulfillment_trace_line"/>
+        <field name="group_id" ref="sales_team.group_sale_salesman"/>
+        <field name="perm_read" eval="True"/><field name="perm_create" eval="False"/>
+        <field name="perm_write" eval="False"/><field name="perm_unlink" eval="False"/>
+    </record>
+    <record id="access_fulfillment_trace_line_purchase" model="ir.model.access">
+        <field name="name">Purchase fulfillment trace lines</field>
+        <field name="model_id" ref="model_portfolio_fulfillment_trace_line"/>
+        <field name="group_id" ref="purchase.group_purchase_user"/>
+        <field name="perm_read" eval="True"/><field name="perm_create" eval="False"/>
+        <field name="perm_write" eval="False"/><field name="perm_unlink" eval="False"/>
+    </record>
+    <record id="access_fulfillment_trace_line_billing" model="ir.model.access">
+        <field name="name">Billing fulfillment trace lines</field>
+        <field name="model_id" ref="model_portfolio_fulfillment_trace_line"/>
+        <field name="group_id" ref="account.group_account_invoice"/>
+        <field name="perm_read" eval="True"/><field name="perm_create" eval="False"/>
+        <field name="perm_write" eval="False"/><field name="perm_unlink" eval="False"/>
+    </record>
+    <record id="fulfillment_trace_owner_rule" model="ir.rule">
+        <field name="name">Fulfillment trace: own snapshots in active companies</field>
+        <field name="model_id" ref="model_portfolio_fulfillment_trace"/>
+        <field name="domain_force">[('create_uid', '=', user.id), ('company_id', 'in', company_ids)]</field>
+    </record>
+    <record id="fulfillment_trace_line_owner_rule" model="ir.rule">
+        <field name="name">Fulfillment trace lines: own snapshots in active companies</field>
+        <field name="model_id" ref="model_portfolio_fulfillment_trace_line"/>
+        <field name="domain_force">[('trace_id.create_uid', '=', user.id), ('company_id', 'in', company_ids)]</field>
+    </record>
+    <record id="fulfillment_trace_form" model="ir.ui.view">
+        <field name="name">portfolio.fulfillment.trace.form</field>
+        <field name="model">portfolio.fulfillment.trace</field>
+        <field name="arch" type="xml">
+            <form string="Fulfillment trace" create="0" edit="0" delete="0">
+                <sheet>
+                    <group>
+                        <field name="sale_order_id" readonly="1" options="{'no_create': True}"/>
+                        <field name="company_id" readonly="1"/>
+                        <field name="currency_id" readonly="1" invisible="1"/>
+                        <field name="has_mixed_uom" readonly="1" invisible="1"/>
+                    </group>
+                    <div class="alert alert-info" invisible="not has_mixed_uom">
+                        Quantities use different units. Read the quantity for each product below.
+                    </div>
+                    <group invisible="has_mixed_uom">
+                        <field name="quantity_uom_id" readonly="1"/>
+                        <field name="gross_delivered_qty" readonly="1"/>
+                        <field name="returned_qty" readonly="1"/>
+                        <field name="net_delivered_qty" readonly="1"/>
+                        <field name="draft_invoice_qty" readonly="1" groups="account.group_account_invoice"/>
+                        <field name="posted_invoice_qty" readonly="1" groups="account.group_account_invoice"/>
+                        <field name="draft_credit_qty" readonly="1" groups="account.group_account_invoice"/>
+                        <field name="posted_credit_qty" readonly="1" groups="account.group_account_invoice"/>
+                    </group>
+                    <group groups="account.group_account_invoice">
+                        <field name="posted_signed_amount" readonly="1"/>
+                    </group>
+                    <field name="line_ids" readonly="1" context="{'create': False, 'edit': False, 'delete': False}">
+                        <list create="0" edit="0" delete="0">
+                            <field name="source_line_id" readonly="1" optional="hide"/>
+                            <field name="product_id" readonly="1"/>
+                            <field name="product_uom_id" readonly="1"/>
+                            <field name="gross_delivered_qty" readonly="1"/>
+                            <field name="returned_qty" readonly="1"/>
+                            <field name="net_delivered_qty" readonly="1"/>
+                            <field name="draft_invoice_qty" readonly="1" groups="account.group_account_invoice"/>
+                            <field name="posted_invoice_qty" readonly="1" groups="account.group_account_invoice"/>
+                            <field name="draft_credit_qty" readonly="1" groups="account.group_account_invoice"/>
+                            <field name="posted_credit_qty" readonly="1" groups="account.group_account_invoice"/>
+                            <field name="currency_id" readonly="1" column_invisible="True"/>
+                            <field name="posted_signed_amount" readonly="1" groups="account.group_account_invoice"/>
+                        </list>
+                    </field>
+                    <notebook>
+                        <page string="Purchases and receipts">
+                            <field name="purchase_order_ids" readonly="1" context="{'create': False, 'edit': False, 'delete': False}">
+                                <list create="0" edit="0" delete="0">
+                                    <field name="name" readonly="1"/>
+                                    <field name="partner_id" readonly="1"/>
+                                    <field name="state" readonly="1"/>
+                                </list>
+                            </field>
+                            <field name="receipt_picking_ids" readonly="1" context="{'create': False, 'edit': False, 'delete': False}">
+                                <list create="0" edit="0" delete="0">
+                                    <field name="name" readonly="1"/>
+                                    <field name="state" readonly="1"/>
+                                    <field name="backorder_id" readonly="1"/>
+                                </list>
+                            </field>
+                        </page>
+                        <page string="Deliveries and backorders">
+                            <field name="delivery_picking_ids" readonly="1" context="{'create': False, 'edit': False, 'delete': False}">
+                                <list create="0" edit="0" delete="0">
+                                    <field name="name" readonly="1"/>
+                                    <field name="state" readonly="1"/>
+                                    <field name="backorder_id" readonly="1"/>
+                                </list>
+                            </field>
+                            <field name="backorder_picking_ids" readonly="1" context="{'create': False, 'edit': False, 'delete': False}">
+                                <list create="0" edit="0" delete="0">
+                                    <field name="name" readonly="1"/>
+                                    <field name="backorder_id" readonly="1"/>
+                                    <field name="state" readonly="1"/>
+                                </list>
+                            </field>
+                        </page>
+                        <page string="Returns">
+                            <field name="return_picking_ids" readonly="1" context="{'create': False, 'edit': False, 'delete': False}">
+                                <list create="0" edit="0" delete="0">
+                                    <field name="name" readonly="1"/>
+                                    <field name="return_id" readonly="1"/>
+                                    <field name="state" readonly="1"/>
+                                </list>
+                            </field>
+                            <field name="return_move_ids" readonly="1" context="{'create': False, 'edit': False, 'delete': False}">
+                                <list create="0" edit="0" delete="0">
+                                    <field name="product_id" readonly="1"/>
+                                    <field name="origin_returned_move_id" readonly="1"/>
+                                    <field name="picking_id" readonly="1"/>
+                                    <field name="state" readonly="1"/>
+                                </list>
+                            </field>
+                        </page>
+                        <page string="Invoices and credits" groups="account.group_account_invoice">
+                            <field name="invoice_ids" readonly="1" context="{'create': False, 'edit': False, 'delete': False}">
+                                <list create="0" edit="0" delete="0">
+                                    <field name="name" readonly="1"/>
+                                    <field name="invoice_date" readonly="1"/>
+                                    <field name="state" readonly="1"/>
+                                </list>
+                            </field>
+                            <field name="credit_note_ids" readonly="1" context="{'create': False, 'edit': False, 'delete': False}">
+                                <list create="0" edit="0" delete="0">
+                                    <field name="name" readonly="1"/>
+                                    <field name="reversed_entry_id" readonly="1"/>
+                                    <field name="state" readonly="1"/>
+                                </list>
+                            </field>
+                        </page>
+                    </notebook>
+                </sheet>
+                <footer><button string="Close" special="cancel"/></footer>
+            </form>
+        </field>
+    </record>
+</odoo>

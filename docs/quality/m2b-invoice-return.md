@@ -1,10 +1,26 @@
-# M2b 开票、实物退货与贷项：进行记录
+# M2b 开票、实物退货与贷项：验证记录
 
 状态：真实额度核算、财务ORM约束、退货贷项控制、财务操作入口及真实并发测试已实现，最新337项全新安装回归通过。
-后端控制、财务动作、向导、完整角色链路及真实并发测试均已通过独立规格及代码质量审查；1.4.0升级回归通过，正在最终CI验证，尚未合并此阶段。
+后端控制、财务动作、向导、完整角色链路及真实并发测试均已通过独立规格及代码质量审查；1.4.0升级及最终CI回归通过，[PR #11](https://github.com/xdfu-nier/odoo-erp-portfolio/pull/11)已合并。
 基线为M2a合并提交 `492ca092a6e5288070656420d8ea13c2336e209c`，已有182项Odoo测试与13项辅助测试通过。
 固定Odoo18源码 `98e48692891fc9a3aaa7f53001305b322f53cfa2`；依赖、数据库及缓存继续限定在项目内。
-开发库已升级M2a但履约策略仍关闭，M2b测试仅使用独立库 `odoo_portfolio_m1_test`。
+开发库已升级M2b的1.4.0，履约策略仍关闭，业务测试仅使用独立库 `odoo_portfolio_m1_test`。下文按时间保留各检查点及当时未完成项，最终交付状态以本节为准。
+
+## 最终交付与开发库核对
+
+最终功能提交 `254ec13604c66011150feca28dfe1f34716e92fa` 的push/PR四项检查通过；
+PR运行 [40999836915](https://github.com/xdfu-nier/odoo-erp-portfolio/actions/runs/40999836915) 的6份白名单报告实际下载并核对，
+**337 post-tests，0 failed，0 errors**，`2026-10-30 03:58:45 UTC`，164.21秒、209,447次查询。
+报告包含6次实际数据库锁等待及6次新游标重试；两次验收数据摘要一致：19个标识、40件库存、1次期初盘点；登录及4个业务模型导航通过。
+本地原始报告保存在主项目 `.runtime/m2b-final-ci/`，不包含密码或配置文件。
+
+PR于 `2026-10-30 05:07:28 UTC` 合并，主分支精确同步提交 `1444c44ad0eb6698595e96b9ae51452c192ec9c0`。
+开发库 `odoo_portfolio` 通过原生升级进入 `18.0.1.4.0`；升级前后19标识、40库存及期初移动ID保持一致。
+原验收工具连续运行两次，摘要与M1原始摘要一致；七个角色分别登录成功，PARTS-A/PARTS-B范围正确。
+证据位于主项目 `.runtime/m2b-development-{before,after}-upgrade.json`、
+`.runtime/m2b-development-acceptance-{first,second}.json`、
+`.runtime/m2b-role-login-verification.json` 和 `.runtime/m2b-development-navigation-verification.json`。
+会计准备、显式本地启用、完整追踪及浏览器页面核对由M2c继续，不据此关闭完整M2问题#5。
 
 ## Task1：实际事实与额度
 
