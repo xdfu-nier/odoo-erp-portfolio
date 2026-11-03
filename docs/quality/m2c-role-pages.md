@@ -124,7 +124,15 @@ node scripts/browser_m2c_check.js \
 诊断提交 `0e69b26d11f967277997a44477c79f25f0de1a10` 仅在内存保留前8192字节stderr并继续排空，
 启动失败时只返回固定原因类别、白名单信号/浏览器名及有界数值/布尔状态，不记录原始输出。
 启动参数、15秒等待和页面断言不变；55项Python、22项Node测试及本机七角色页面复跑通过，独立规格/质量复核通过。
-Linux实际原因等待诊断版本CI核对。
+诊断版本的[PR运行41557064592](https://github.com/xdfu-nier/odoo-erp-portfolio/actions/runs/41557064592) 确认Linux原因为
+`singleton_socket_path_too_long`，Chrome收到SIGABRT，未生成DevTools端口文件。页面断言未被跳过。
+[Chromium官方实现](https://github.com/chromium/chromium/blob/main/chrome/browser/process_singleton_posix.cc)
+使用私有临时目录中的Unix Singleton套接字；Linux与macOS的地址长度处理不同，解释了长项目临时路径只在CI触发的现象。
+
+针对性修复 `15a3a9b7c2961a7a999e5706d6570c1dd7a44dad` 仅为Chrome子进程创建短路径、0700的OS IPC临时目录，
+父环境不变，用户配置、缓存、报告和依赖继续在项目内。退出后核对所创建目录的所有者及身份再清理，不跟随替换或嵌套符号链接，
+不在浏览器仍运行时清理。新增3项Node回归RED为22通过/3失败，修复后 **55项Python、25项Node测试通过**，
+长父项目TMPDIR下的七角色实际页面复跑通过；规格与独立质量复核通过，对应Linux CI待完成。
 
 ## 已发布检查点的CI证据
 
