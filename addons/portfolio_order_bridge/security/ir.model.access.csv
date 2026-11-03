@@ -1,0 +1,8 @@
+id,name,model_id:id,group_id:id,perm_read,perm_write,perm_create,perm_unlink
+access_import_source_settings,Import source Settings,model_portfolio_import_source,base.group_system,1,1,1,1
+access_import_source_integration,Import source Integration,model_portfolio_import_source,group_import_integration,1,0,0,0
+access_import_source_operator,Import source Operator,model_portfolio_import_source,group_import_operator,1,0,0,0
+access_import_customer_settings,Import customer Settings,model_portfolio_import_customer_map,base.group_system,1,1,1,1
+access_import_customer_operator,Import customer Operator,model_portfolio_import_customer_map,group_import_operator,1,0,0,0
+access_import_product_settings,Import product Settings,model_portfolio_import_product_map,base.group_system,1,1,1,1
+access_import_product_operator,Import product Operator,model_portfolio_import_product_map,group_import_operator,1,0,0,0

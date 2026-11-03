@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="group_import_integration" model="res.groups">
+        <field name="name">Order Import Integration</field>
+        <field name="implied_ids" eval="[(6, 0, [ref('base.group_user')])]"/>
+    </record>
+    <record id="group_import_operator" model="res.groups">
+        <field name="name">Order Import Operator</field>
+        <field name="implied_ids" eval="[(6, 0, [ref('base.group_user')])]"/>
+    </record>
+
+    <record id="rule_import_source_company" model="ir.rule">
+        <field name="name">Import sources: active allowed companies</field>
+        <field name="model_id" ref="model_portfolio_import_source"/>
+        <field name="domain_force">[('company_id', 'in', company_ids)]</field>
+    </record>
+    <record id="rule_import_customer_company" model="ir.rule">
+        <field name="name">Import customer mappings: active allowed companies</field>
+        <field name="model_id" ref="model_portfolio_import_customer_map"/>
+        <field name="domain_force">[('company_id', 'in', company_ids)]</field>
+    </record>
+    <record id="rule_import_product_company" model="ir.rule">
+        <field name="name">Import product mappings: active allowed companies</field>
+        <field name="model_id" ref="model_portfolio_import_product_map"/>
+        <field name="domain_force">[('company_id', 'in', company_ids)]</field>
+    </record>
+
+    <record id="rule_import_source_settings" model="ir.rule">
+        <field name="name">Import sources: Settings company scope</field>
+        <field name="model_id" ref="model_portfolio_import_source"/>
+        <field name="domain_force">[(1, '=', 1)]</field>
+        <field name="groups" eval="[(4, ref('base.group_system'))]"/>
+    </record>
+    <record id="rule_import_source_integration" model="ir.rule">
+        <field name="name">Import sources: explicitly authorized integration users</field>
+        <field name="model_id" ref="model_portfolio_import_source"/>
+        <field name="domain_force">[('integration_user_ids', 'in', [user.id])]</field>
+        <field name="groups" eval="[(4, ref('group_import_integration'))]"/>
+        <field name="perm_write" eval="False"/>
+        <field name="perm_create" eval="False"/>
+        <field name="perm_unlink" eval="False"/>
+    </record>
+    <record id="rule_import_source_operator" model="ir.rule">
+        <field name="name">Import sources: assigned processor</field>
+        <field name="model_id" ref="model_portfolio_import_source"/>
+        <field name="domain_force">[('processor_user_id', '=', user.id)]</field>
+        <field name="groups" eval="[(4, ref('group_import_operator'))]"/>
+        <field name="perm_write" eval="False"/>
+        <field name="perm_create" eval="False"/>
+        <field name="perm_unlink" eval="False"/>
+    </record>
+    <record id="rule_import_customer_settings" model="ir.rule">
+        <field name="name">Import customer mappings: Settings company scope</field>
+        <field name="model_id" ref="model_portfolio_import_customer_map"/>
+        <field name="domain_force">[(1, '=', 1)]</field>
+        <field name="groups" eval="[(4, ref('base.group_system'))]"/>
+    </record>
+    <record id="rule_import_customer_operator" model="ir.rule">
+        <field name="name">Import customer mappings: assigned source processor</field>
+        <field name="model_id" ref="model_portfolio_import_customer_map"/>
+        <field name="domain_force">[('source_id.processor_user_id', '=', user.id)]</field>
+        <field name="groups" eval="[(4, ref('group_import_operator'))]"/>
+        <field name="perm_write" eval="False"/>
+        <field name="perm_create" eval="False"/>
+        <field name="perm_unlink" eval="False"/>
+    </record>
+    <record id="rule_import_product_settings" model="ir.rule">
+        <field name="name">Import product mappings: Settings company scope</field>
+        <field name="model_id" ref="model_portfolio_import_product_map"/>
+        <field name="domain_force">[(1, '=', 1)]</field>
+        <field name="groups" eval="[(4, ref('base.group_system'))]"/>
+    </record>
+    <record id="rule_import_product_operator" model="ir.rule">
+        <field name="name">Import product mappings: assigned source processor</field>
+        <field name="model_id" ref="model_portfolio_import_product_map"/>
+        <field name="domain_force">[('source_id.processor_user_id', '=', user.id)]</field>
+        <field name="groups" eval="[(4, ref('group_import_operator'))]"/>
+        <field name="perm_write" eval="False"/>
+        <field name="perm_create" eval="False"/>
+        <field name="perm_unlink" eval="False"/>
+    </record>
+</odoo>
