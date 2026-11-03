@@ -34,6 +34,8 @@ def safe_text(env, value, label, maximum=64):
 class ImportAccess:
     """Shared boundaries; private ORM operations remain usable by trusted validators."""
 
+    __slots__ = ()
+
     def _import_actor(self):
         actor = self.with_user(self.env.uid)
         user = actor.env.user.sudo()

@@ -7,6 +7,8 @@ from .access import ImportAccess, safe_text
 
 
 class ImportMapping(ImportAccess):
+    __slots__ = ()
+
     _check_company_auto = True
     _order = "id"
 

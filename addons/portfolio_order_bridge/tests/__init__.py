@@ -1,1 +1,1 @@
-from . import test_import_config
+from . import test_import_config, test_import_ingress
