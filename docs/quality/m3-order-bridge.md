@@ -24,4 +24,24 @@
 - 根代理最终完整回归 `.runtime/m3b-config-final-full-native.log`：**444 项 post-tests、零失败/零错误**，2026-11-03 08:48:58 UTC 结束，238.01 秒、430203 次查询。其中既有进销存 412 项、新增配置 32 项；不用含生命周期钩子的统计项冒充测试用例数。
 - 根代理辅助回归 83 项 Python、27 项 Node 和完整 Ruff 检查通过；日志 `.runtime/m3b-config-final-v2-python.log`、`.runtime/m3b-config-final-node.log`。独立规格、质量以及 CI 同时选择两个模块的参数变更审查通过。
 
-本阶段尚未建立接收任务、生成报价、调度或重试界面。独立事务幂等与恢复、认证 HTTP 及 M3 GitHub 原生 CI 仍未执行；对应 UAT 保持未执行。设计与后续任务见 [M3 设计](../superpowers/specs/2026-11-03-order-bridge-design.md)、[来源映射计划](../superpowers/plans/2026-11-03-order-bridge-m3b-config.md) 和[持久化接收计划](../superpowers/plans/2026-11-03-order-bridge-m3b-ingress.md)。
+本节统计仅覆盖来源与映射。接收任务的后续验证单独记录；生成报价、调度与重试界面、独立事务并发及恢复、完整导入 HTTP 尚未实现，相关 UAT 不据来源测试标记通过。设计与后续任务见 [M3 设计](../superpowers/specs/2026-11-03-order-bridge-design.md)、[来源映射计划](../superpowers/plans/2026-11-03-order-bridge-m3b-config.md) 和[持久化接收计划](../superpowers/plans/2026-11-03-order-bridge-m3b-ingress.md)。
+
+## 来源映射阶段的实际 GitHub CI
+
+公开提交 `9280d2b13a5bd4f432bc1bd464606f1d610bc554` 已发布到草稿 [PR #13](https://github.com/xdfu-nier/odoo-erp-portfolio/pull/13)。[push 工作流](https://github.com/xdfu-nier/odoo-erp-portfolio/actions/runs/41606433644) 和 [PR 工作流](https://github.com/xdfu-nier/odoo-erp-portfolio/actions/runs/41606707063) 的 scaffold/native-odoo 共四个任务全部成功。
+
+实际下载 PR 工作流白名单制品到本地 `.runtime/m3-config-ci`，共 21 个文件：Linux 原生结果为 **444 项 post-tests、零失败/零错误**，2026-11-03 09:01:34 UTC 结束、291.58 秒、390012 次查询。验收数据准备两次字节相同，原生履约两次报告字节相同；七角色 HTTP 与浏览器报告 `ok=true`，七张 PNG 文件头有效。结果仍为库存 10、净交付 90、净过账人民币 7650。
+
+这一远程结果仅覆盖该公开提交的载荷与来源映射阶段。后续未提交的接收任务代码需重新完成原生验证、独立审查和新的 GitHub CI，不沿用旧提交的成功结论。
+
+## M3b 持久化接收与单事务幂等
+
+2026-11-03，模块 `18.0.1.1.0`，专用测试库 `odoo_portfolio_m1_test`。
+
+- 35 项初始接收测试实际因缺少任务模型失败（`.runtime/m3b-ingress-red.log`），再实现获授权来源接收、持久 pending 任务、同键同摘要复用及异摘要冲突、服务器设置全部审计身份、数据库唯一键和方法自身保存点。
+- 真实升级发现原有 Python mixin 的隐含实例字典与 Odoo 模型扩展布局冲突；仅为两个 Python mixin 声明空 slots，保留原生 `_inherit` 和已有权限。
+- 规格审查要求私有 SQL 锁、配置读取及结果辅助方法也独立校验实际身份/来源/公司。六项反例实际出现36个失败子场景（`.runtime/m3b-ingress-capability-red.log`）后补齐能力检查。质量审查发现规范行排序会误报原始输入行号；价格/折扣两项反例先失败（`.runtime/m3b-ingress-path-red.log`）后改用已验证的原始顺序校验，业务摘要不变。
+- 最终接入模块74项 post-tests（配置32、接收42）零失败/零错误，21.15秒、45185次查询，`.runtime/m3b-ingress-final-addon.log`。
+- 最终完整 **486 项 Odoo post-tests、零失败/零错误**，2026-11-03 09:37:43 UTC结束，233.86秒、451028次查询；`.runtime/m3b-ingress-reviewed-full-native.log`。83项Python、27项Node及完整Ruff检查通过，独立规格与质量审查通过。
+
+接收不创建销售/库存/会计单据，也不提交调用方事务。缺失映射可保存为pending，商品单位精度由后续处理器验证。当前尚无工作器生成报价，也未执行两个独立事务的并发接收，因此UAT-014/016的“一张销售单”及并发结果、失败重试与退出恢复仍保持未执行。

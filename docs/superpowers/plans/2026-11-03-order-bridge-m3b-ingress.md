@@ -16,7 +16,7 @@
 
 ### Task 1: 持久接收与不可变任务
 
-- [ ] **Step 1: 写原生失败测试，根代理实际 RED**
+- [x] **Step 1: 写原生失败测试，根代理实际 RED**
 
 测试类 `TestImportIngress` 标记 post_install/-at_install。每个测试开始先 assertTrue 任务模型存在，避免注册表巨量错误。来源、角色、CNY 与主数据完全处于测试事务；不提交开发数据。
 
@@ -41,7 +41,7 @@ self.assertFalse(first["sale_order_id"])
 
 根代理采用已有 native 命令，`-u portfolio_order_bridge --test-tags /portfolio_order_bridge:TestImportIngress`，实际确认缺失任务模型或公开入口失败后解冻实现。连接、安装或发现错误不算 RED。
 
-- [ ] **Step 2: 接收模型及服务端路径**
+- [x] **Step 2: 接收模型及服务端路径**
 
 模型 `portfolio.import.job`：source_id、company_id、external_order_id、payload_hash、raw_payload、canonical_payload、submitted_by_id、received_at、state、attempt_count、last_attempt_at、error_code、error_detail、sale_order_id。所有字段只读；state 为 pending/processing/done/failed；结果关联 sale.order，check_company=True。`(company_id, source_id, external_order_id)` 是数据库唯一约束。载荷和内部错误字段仅 Integration/Operator 组可见，任务整体没有 Sales ACL。
 
@@ -59,9 +59,11 @@ self.assertFalse(first["sale_order_id"])
 
 来源创建与公开维护拒绝 ingress_revision；私有锁先校验来源/身份。Integration ACL 可为私有 ORM create 提供模型 create 位，但公开 override 始终拒绝直接创建。所有私有路径重新验证能力，不使用可伪造 context 标记。失败捕获后 flush/invalidate 的活库比较证明无半个任务或摘要覆盖。
 
-- [ ] **Step 3: 根代理聚焦 GREEN**
+- [x] **Step 3: 根代理聚焦 GREEN**
 
 根代理运行配置与接收两类原生测试，辅助 Python 全量与 Ruff；确认接收反例不影响既有来源配置，并冻结本任务源文件后进入独立事务测试。
+
+实际结果：2026-11-03，42 项接收测试与32项配置测试，共74项原生用例通过（`.runtime/m3b-ingress-final-addon.log`）。新增测试最初因模型缺失失败；审查追加私有能力边界和原始行号回归，也分别实际观察失败后再修复。最终根代理完整486项Odoo post-tests零失败/零错误，09:37:43 UTC结束，233.86秒、451028次查询（`.runtime/m3b-ingress-reviewed-full-native.log`）；83项Python、27项Node、Ruff及规格/质量审查通过。此处证明单事务接收与不可变任务，Task2真实并发尚未执行，不提前将UAT-014/016整项标记通过。
 
 ### Task 2: 真正并发幂等
 
