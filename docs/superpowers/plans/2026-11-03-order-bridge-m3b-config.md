@@ -22,7 +22,7 @@
 
 ### Task 1: 原生来源、映射及授权
 
-- [ ] **Step 1: 测试先行与最小发现结构**
+- [x] **Step 1: 测试先行与最小发现结构**
 
 创建模块 manifest（`18.0.1.0.0`、LGPL-3、depends 仅 `portfolio_trade`、installable true）和测试包，初始不注册业务模型或加载不存在的安全文件。该结构只用于让原生测试发现失败测试。每个测试 setUp 先断言三个模型已注册，再建立来源：
 
@@ -48,7 +48,7 @@ def setUp(self):
 9. 检查 `search/read/web_read/search_read/search_count/read_group/export_data` 和显式 ID 的限制；映射和来源私有配置不能通过搜索域/排序/分组推断。客户/商品直接变为异公司或失效后，处理前验证拒绝该映射。
 10. 使用标准 `unittest.TestCase.assertRaises` 捕获批量维护错误，flush/invalidate 后核对没有部分写入；不要用 Odoo assertRaises 自动保存点掩盖方法自身原子性。
 
-- [ ] **Step 2: 根代理实际原生 RED**
+- [x] **Step 2: 根代理实际原生 RED**
 
 由根代理运行固定源码、根配置和独立测试库，记录 `.runtime/m3b-config-red.log`：
 
@@ -63,7 +63,7 @@ def setUp(self):
 
 预期原生测试因模型未注册断言失败。模块安装/连接或测试发现失败均不算有效 RED；根代理排除环境问题后才解冻生产实现。
 
-- [ ] **Step 3: 模型和安全实现**
+- [x] **Step 3: 模型和安全实现**
 
 统一字段约定：
 
@@ -81,7 +81,7 @@ def setUp(self):
 
 维护入口在当前用户环境验证实际角色、实际公司列表和 allowed_company_ids；丢弃调用方 defaults/context 后执行内部业务写入。create/write 自身保存点覆盖整个批次，失败后即使调用方捕获异常，也不残留部分写入。所有授权以当前 UID 为准，`.sudo()` 不提升接入/处理/维护身份。原生客户端 id-only web_read 和带关系字段的导出同样校验。
 
-- [ ] **Step 4: 根代理 GREEN 和回归**
+- [x] **Step 4: 根代理 GREEN 和回归**
 
 ```bash
 # 根代理沿用 Step2 命令，将 -i 改为 -u、日志改为 m3b-config-green.log。
@@ -91,6 +91,10 @@ def setUp(self):
 
 聚焦原生测试通过后，由根代理运行 `/portfolio_trade,/portfolio_order_bridge` 完整原生回归；查看 post-tests 统计为零失败/零错误。纯辅助解析测试通过不代替模型和真实角色验证。
 
-- [ ] **Step 5: 两阶段审查、记录与提交**
+发布开发分支前，将 `.github/workflows/checks.yml` 原生安装参数从单独 `portfolio_trade` 改为 `portfolio_trade,portfolio_order_bridge`，测试标签同时选择两个模块。这样草稿 PR 的原生任务实际包含本阶段模型测试；既有七角色履约流程和制品白名单保持原样。此配置由根代理单独审查 YAML 与实际 GitHub 运行结果，不新建仅镜像参数的测试。
+
+- [x] **Step 5: 两阶段审查、记录与提交**
 
 先独立规格审查，再独立质量审查。修复必须补有意义的反例并重新执行相关原生验证。全部门禁通过后仅提交本任务文件，提交信息 `feat: configure authorized order sources and mappings`，记录实际测试数、模块版本和证据，再编写持久化接收任务计划。
+
+实际结果：2026-11-03，最终 32 项来源/映射原生测试通过（`.runtime/m3b-config-final-native.log`）。质量审查发现继承的 public exists 可探测无授权 ID；先以真实 RPC 方法分发门禁测试观察 12 个子场景失败，再用仅限这三个模型的 `@api.private` 包装保留内部 helper，复验通过。最终完整 444 项 Odoo post-tests 零失败/零错误（08:48:58 UTC、238.01 秒、430203 次查询，`.runtime/m3b-config-final-full-native.log`），83 项辅助 Python、27 项 Node 和 Ruff 通过。独立规格、质量及 CI 参数变更审查均通过；GitHub 实际 CI 待发布分支运行。
