@@ -18,7 +18,7 @@
 
 ### Task 1: 精确载荷与摘要
 
-- [ ] **Step 1: 写失败测试并冻结实现**
+- [x] **Step 1: 写失败测试并冻结实现**
 
 建立 fixture 与测试加载器；文件不存在时给出明确断言，不因 import 错误阻止测试发现：
 
@@ -35,7 +35,7 @@ spec.loader.exec_module(module)
 
 反例包括每一必填字段缺失、未知顶层/行字段、非字典/非列表、空行/101 行、重复行号、标识空白/控制字符/长度、错误币种类型、浮点/布尔/负数/指数/NaN/Infinity、小数有效精度超过六位、零数量、数量或价格超十亿、折扣超过百、数值字符串超过 64 字符、载荷超过 65536 字节。错误只含错误码和路径，不回显特制敏感输入值。
 
-- [ ] **Step 2: 根代理实际 RED**
+- [x] **Step 2: 根代理实际 RED**
 
 ```bash
 .venv/bin/python -X pycache_prefix=.cache/pycache -m unittest discover -s tests -p test_order_payload.py -v
@@ -43,7 +43,7 @@ spec.loader.exec_module(module)
 
 预期因缺少 `payload.py` 的断言失败。根代理确认后通知实现者开始生产代码。
 
-- [ ] **Step 3: 实现纯解析 API**
+- [x] **Step 3: 实现纯解析 API**
 
 公开签名和返回约定：
 
@@ -67,7 +67,7 @@ class NormalizedOrder:
 
 JSON 使用 `ensure_ascii=False, sort_keys=True, separators=(',', ':'), allow_nan=False`；原始载荷在递归资源检查后进行 UTF-8 字节上限检查。业务部分构造新字典、按行号排序，计算 SHA-256。返回对象不持有调用方的可变结构。不在异常中包含 JSON、原始键值或 Decimal 异常文本。
 
-- [ ] **Step 4: 根代理 GREEN 和辅助回归**
+- [x] **Step 4: 根代理 GREEN 和辅助回归**
 
 ```bash
 .venv/bin/python -X pycache_prefix=.cache/pycache -m unittest discover -s tests -p test_order_payload.py -v
@@ -78,6 +78,8 @@ node --test tests/browser_m2c_check.test.js
 
 预期新契约测试及既有 55 项 Python、27 项 Node 测试全部通过，ruff 无错误。此任务不触及 Odoo 模型或现有模块，不用静态测试冒充原生集成验收。
 
-- [ ] **Step 5: 自审、独立审查和提交**
+- [x] **Step 5: 自审、独立审查和提交**
 
 实现者检查边界、资源上限与十进制精确性后冻结文件。根代理先组织规格审查，再组织质量审查，任何发现先修复并重跑相关测试。通过后仅暂存本任务文件，提交 `feat: normalize external order payloads exactly`。更新本计划实际结果，再进入 M3b 模型计划。
+
+实际记录：2026-11-03，28 项解析测试先因缺少实现逐项失败（`.runtime/m3a-red-tests.log`），实现后根代理完整 83 项 Python 测试、27 项 Node 测试和相关 Ruff 检查通过（`.runtime/m3a-green-python.log`、`m3a-green-node.log`）。独立规格与质量审查均通过，源代码提交 `a6b8f91`。M3a 为纯解析器；持久化、Odoo 权限、并发和恢复尚未实现，不由本记录宣称通过。
