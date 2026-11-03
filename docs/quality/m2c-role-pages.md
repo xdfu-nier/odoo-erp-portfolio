@@ -134,6 +134,18 @@ node scripts/browser_m2c_check.js \
 不在浏览器仍运行时清理。新增3项Node回归RED为22通过/3失败，修复后 **55项Python、25项Node测试通过**，
 长父项目TMPDIR下的七角色实际页面复跑通过；规格与独立质量复核通过，对应Linux CI待完成。
 
+短IPC修复的[PR运行41560615245](https://github.com/xdfu-nier/odoo-erp-portfolio/actions/runs/41560615245) 确认Chrome启动问题消失，
+浏览器已通过销售、两位经理、采购和仓库，在财务发票页面阶段失败。实际下载19份产物核对：
+412项原生测试零失败/错误，`2026-11-03 01:41:22 UTC`，252.30秒、355,650次查询；两次流程及七角色HTTP通过。
+服务端发票视图和列表请求成功，失败处仍在前端切换窗口，未放宽页面证据要求。
+
+记录行查找和点击原先是两次独立页面求值，行在菜单刷新时消失会触发空对象click。新增实际表达式VM反例：
+27项Node中26通过、1失败，错误为 `Cannot read properties of undefined (reading 'click')`；
+`.runtime/m2c-browser-record-click-red.log`。修复 `eea208637424e96b1ed3f4496d540ca8287db608`
+把精确可见行查找与点击合为同次有界等待，缺失/隐藏/错误行继续等待或失败，表单名称和可见性要求不变。
+另增加不会输出单据文本的表单阶段布尔诊断；旧单元测试的真实时钟抖动改为测试专用可控时钟，未改变页面超时。
+55项Python、27项Node及本机七角色实际页面复跑通过；规格与独立质量复核通过，对应Linux CI待完成。
+
 ## 已发布检查点的CI证据
 
 会计准备检查点 `6ca33accbd8d10e285aeb569eb4cea282d34b1a6` 的push与PR工作流成功。
