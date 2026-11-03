@@ -315,7 +315,9 @@ function sanitizeDiagnostics(raw) {
   if (!raw || typeof raw !== 'object') return {};
   const safe = {};
   for (const key of ['document_ready', 'navbar_present', 'navbar_visible', 'list_present', 'list_visible',
-    'table_present', 'table_visible', 'empty_helper_present', 'empty_helper_visible']) {
+    'table_present', 'table_visible', 'empty_helper_present', 'empty_helper_visible',
+    'form_present', 'form_visible', 'name_widget_present', 'name_widget_visible',
+    'expected_name_matches', 'error_dialog_present']) {
     if (typeof raw[key] === 'boolean') safe[key] = raw[key];
   }
   for (const key of ['row_count', 'empty_help_text_length']) {
@@ -323,7 +325,7 @@ function sanitizeDiagnostics(raw) {
   }
   const classes = new Set(['o_action_manager', 'o_action', 'o_list_view', 'o_kanban_view', 'o_form_view',
     'o_content', 'o_list_renderer', 'o_view_nocontent', 'o_nocontent_help', 'o_list_table', 'o_renderer',
-    'o_view_controller', 'o_control_panel', 'o_view_sample_data', 'o_searchview', 'o_loading', 'o_web_client']);
+    'o_view_controller', 'o_control_panel', 'o_view_sample_data', 'o_searchview', 'o_loading', 'o_web_client', 'o_error_dialog']);
   const columns = new Set(['name', 'origin', 'state', 'date_order', 'partner_id', 'user_id', 'invoice_status',
     'amount_total', 'amount_untaxed', 'currency_id', 'company_id', 'date', 'date_deadline', 'scheduled_date',
     'picking_type_id', 'location_id', 'location_dest_id', 'priority', 'invoice_date', 'invoice_date_due',
@@ -481,6 +483,7 @@ async function collectValidatedList(page, expression, key, inputs, role, {timeou
 }
 
 async function menuPage(page, key, menu, options, inputs, role, progress) {
+  progress.expectedRecordName = undefined;
   progress.stage = `custom ${key} rendered list readiness`;
   await page.navigate(`${options.baseUrl}/odoo/action-${menu.action_id}?debug=1`);
   const ready = inspect('return visible(document.querySelector(".o_list_view")) || visible(document.querySelector(".o_action_manager .o_view_nocontent .o_nocontent_help"));');
@@ -493,6 +496,7 @@ async function menuPage(page, key, menu, options, inputs, role, progress) {
   await page.wait(ready);
   progress.stage = `custom ${key} collected native evidence`;
   return collectValidatedList(page, inspect(`const list = document.querySelector('.o_list_view');
+    const form = document.querySelector('.o_form_view'); const nameWidget = form && field(form, 'name');
     const empty = document.querySelector('.o_action_manager .o_view_nocontent .o_nocontent_help');
     const root = visible(list) ? list : empty?.closest('.o_action') || empty;
     const nameCells = [...(root?.querySelectorAll('tr.o_data_row td[name="name"]') || [])];
@@ -508,14 +512,18 @@ async function menuPage(page, key, menu, options, inputs, role, progress) {
         list_present: !!list, list_visible: visible(list), table_present: !!list?.querySelector('.o_list_table'),
         table_visible: visible(list?.querySelector('.o_list_table')), row_count: nameCells.length,
         empty_helper_present: !!empty, empty_helper_visible: visible(empty), empty_help_text_length: text(empty).length,
+        form_present: !!form, form_visible: visible(form), name_widget_present: !!nameWidget,
+        name_widget_visible: visible(nameWidget), expected_name_matches: false,
+        error_dialog_present: !!document.querySelector('.o_error_dialog'),
         native_columns: headers.map(el => el.dataset.name), visible_native_columns: headers.filter(visible).map(el => el.dataset.name),
-        view_classes: [...document.querySelectorAll('.o_action_manager, .o_action_manager [class]')].flatMap(el => [...el.classList]),
+        view_classes: [...document.querySelectorAll('.o_action_manager, .o_action_manager [class], .o_error_dialog')].flatMap(el => [...el.classList]),
         visible_menu_xmlids: [...document.querySelectorAll('[data-menu-xmlid]')].filter(visible).map(el => el.dataset.menuXmlid)}};`),
   key, inputs, role);
 }
 
-async function failureDiagnostics(page) {
+async function failureDiagnostics(page, expectedRecordName) {
   const raw = await page.evaluate(inspect(`const list = document.querySelector('.o_list_view');
+    const form = document.querySelector('.o_form_view'); const nameWidget = form && field(form, 'name');
     const navbar = document.querySelector('.o_main_navbar');
     const table = list?.querySelector('.o_list_table');
     const empty = document.querySelector('.o_action_manager .o_view_nocontent .o_nocontent_help');
@@ -523,17 +531,26 @@ async function failureDiagnostics(page) {
       list_present: !!list, list_visible: visible(list), table_present: !!table, table_visible: visible(table),
       row_count: document.querySelectorAll('.o_action_manager tr.o_data_row').length,
       empty_helper_present: !!empty, empty_helper_visible: visible(empty), empty_help_text_length: (empty?.textContent || '').trim().length,
-      view_classes: [...document.querySelectorAll('.o_action_manager, .o_action_manager [class]')].flatMap(el => [...el.classList]),
+      form_present: !!form, form_visible: visible(form), name_widget_present: !!nameWidget, name_widget_visible: visible(nameWidget),
+      expected_name_matches: ${JSON.stringify(expectedRecordName || null)} !== null && text(nameWidget) === ${JSON.stringify(expectedRecordName || null)},
+      error_dialog_present: !!document.querySelector('.o_error_dialog'),
+      view_classes: [...document.querySelectorAll('.o_action_manager, .o_action_manager [class], .o_error_dialog')].flatMap(el => [...el.classList]),
       native_columns: [...document.querySelectorAll('.o_action_manager th[data-name]')].map(el => el.dataset.name),
       visible_native_columns: [...document.querySelectorAll('.o_action_manager th[data-name]')].filter(visible).map(el => el.dataset.name),
       visible_menu_xmlids: [...document.querySelectorAll('[data-menu-xmlid]')].filter(visible).map(el => el.dataset.menuXmlid)};`));
   return sanitizeDiagnostics(raw);
 }
 
-async function clickRecord(page, name) {
-  await page.wait(inspect(`return [...document.querySelectorAll('.o_list_view tr.o_data_row td[name="name"]')].some(el => text(el) === ${JSON.stringify(name)});`));
-  await page.evaluate(inspect(`const cell = [...document.querySelectorAll('.o_list_view tr.o_data_row td[name="name"]')].find(el => text(el) === ${JSON.stringify(name)}); cell.click(); return true;`));
+async function clickRecord(page, name, progress, kind) {
+  requireEvidence(['invoice', 'stock'].includes(kind));
+  progress.expectedRecordName = name;
+  progress.stage = `native ${kind} row readiness`;
+  progress.stage = `native ${kind} record click`;
+  await page.wait(inspect(`const cell = [...document.querySelectorAll('.o_list_view tr.o_data_row td[name="name"]')].find(el => visible(el) && text(el) === ${JSON.stringify(name)});
+    if (!cell) return false; cell.click(); return true;`));
+  progress.stage = `native ${kind} form readiness`;
   await page.wait(inspect(`const form = document.querySelector('.o_form_view'); return visible(form) && fieldText(form, 'name') === ${JSON.stringify(name)};`));
+  progress.stage = `native ${kind} form ready`;
 }
 
 async function sourceAndTrace(page, role, options, inputs, state) {
@@ -601,7 +618,7 @@ async function checkRole(cdp, role, options, inputs, progress) {
       labels.push(result.menu_label);
       if (!primary) primary = result;
       if (key === 'invoices') {
-        await clickRecord(page, inputs.flow.identities.invoice_first.name);
+        await clickRecord(page, inputs.flow.identities.invoice_first.name, progress, 'invoice');
         state.invoice = {visible: true, model: 'account.move', name: inputs.flow.identities.invoice_first.name};
       }
     }
@@ -614,7 +631,7 @@ async function checkRole(cdp, role, options, inputs, progress) {
       progress.stage = 'rendered source and clicked fulfillment trace';
       await sourceAndTrace(page, role, options, inputs, state);
     } else if (role === 'warehouse') {
-      await clickRecord(page, inputs.flow.identities.delivery_first.name);
+      await clickRecord(page, inputs.flow.identities.delivery_first.name, progress, 'stock');
       requireEvidence(await page.evaluate(inspect('return !document.querySelector("button[name=action_portfolio_trace]");')));
     }
     progress.stage = 'safe screenshot';
@@ -626,7 +643,7 @@ async function checkRole(cdp, role, options, inputs, progress) {
   } catch (error) {
     if (error.diagnostics) progress.diagnostics = sanitizeDiagnostics(error.diagnostics);
     else if (page) {
-      try { progress.diagnostics = await failureDiagnostics(page); } catch { /* Keep the controlled stage failure. */ }
+      try { progress.diagnostics = await failureDiagnostics(page, progress.expectedRecordName); } catch { /* Keep the controlled stage failure. */ }
     }
     throw error;
   } finally {
@@ -743,6 +760,6 @@ async function main(argv = process.argv.slice(2)) {
   }
 }
 
-module.exports = {parseArgs, readInputs, validateRoleReport, classifyListRows, collectValidatedList, validateListEvidence, validateDomEvidence,
+module.exports = {parseArgs, readInputs, validateRoleReport, classifyListRows, collectValidatedList, clickRecord, validateListEvidence, validateDomEvidence,
   validateBrowserReport, sanitizeDiagnostics, chromeStartupDiagnostics, createChromeLaunch, main};
 if (require.main === module) main().then(status => { process.exitCode = status; });

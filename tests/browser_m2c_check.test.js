@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
+const vm = require('node:vm');
 
 const ROOT = path.resolve(__dirname, '..');
 const SCRIPT = path.join(ROOT, 'scripts', 'browser_m2c_check.js');
@@ -331,8 +332,10 @@ test('correct stock column names and record text cannot satisfy acceptance when 
   assert.throws(() => verifier.validateDomEvidence('warehouse', hiddenPage, inputs));
 });
 
-test('bounded list collection retries transitions and returns only the same validated target snapshot', async () => {
+test('bounded list collection retries transitions and returns only the same validated target snapshot', async t => {
   const verifier = api();
+  let clock = 0;
+  t.mock.method(Date, 'now', () => clock);
   assert.equal(typeof verifier.collectValidatedList, 'function', 'Bounded validated-list collection is missing');
   const inputs = fixture();
   const target = {...stockList(inputs), has_native_sample_data: false, empty_state: null};
@@ -344,6 +347,7 @@ test('bounded list collection retries transitions and returns only the same vali
   const snapshots = [old, transition, wrongRecords, target];
   const reads = [];
   const fakePage = {evaluate: async () => {
+    clock += 1;
     const snapshot = snapshots.shift();
     assert.ok(snapshot, 'Collector re-read after finding and validating the target snapshot');
     reads.push(snapshot);
@@ -358,7 +362,7 @@ test('bounded list collection retries transitions and returns only the same vali
   const hidden = structuredClone(target);
   hidden.column_visibility.state = false;
   let attempts = 0;
-  await assert.rejects(() => verifier.collectValidatedList({evaluate: async () => { attempts += 1; return hidden; }},
+  await assert.rejects(() => verifier.collectValidatedList({evaluate: async () => { clock += 1; attempts += 1; return hidden; }},
     'DOM evidence only', 'stock', inputs, 'warehouse', {timeoutMs: 10, intervalMs: 0}));
   assert.ok(attempts > 1, 'A hidden persistent target must be retried and ultimately fail');
 });
@@ -457,6 +461,89 @@ test('failure DOM diagnostics whitelist structure and never include credential o
   assert.equal(Object.hasOwn(invalid, 'empty_help_text_length'), false);
   assert.equal(Object.hasOwn(invalid, 'list_visible'), false);
   assert.ok(invalid.view_classes.length <= 20);
+});
+
+test('record form diagnostics expose only typed readiness flags and precise safe stages', async () => {
+  const verifier = api();
+  const raw = {form_present: true, form_visible: false, name_widget_present: true,
+    name_widget_visible: false, expected_name_matches: false, error_dialog_present: true,
+    expected_record_name: 'PRIVATE-DOCUMENT-NAME', actual_record_name: 'PRIVATE-ACTUAL-NAME',
+    dialog_text: 'PRIVATE-ERROR-BODY', input_values: ['PRIVATE-INPUT-VALUE'],
+    view_classes: ['o_form_view', 'o_error_dialog', 'PRIVATE-CLASS']};
+  const safe = verifier.sanitizeDiagnostics(raw);
+  for (const key of ['form_present', 'form_visible', 'name_widget_present', 'name_widget_visible',
+    'expected_name_matches', 'error_dialog_present']) assert.equal(safe[key], raw[key]);
+  assert.deepEqual(safe.view_classes, ['o_form_view', 'o_error_dialog']);
+  assert.ok(!JSON.stringify(safe).includes('PRIVATE'));
+  assert.equal(Object.hasOwn(verifier.sanitizeDiagnostics({...raw, form_present: 'PRIVATE-BOOLEAN'}), 'form_present'), false);
+  assert.equal(typeof verifier.clickRecord, 'function', 'Record-stage diagnostic seam is missing');
+  const stages = [];
+  const progress = new Proxy({stage: 'custom invoices collected native evidence'}, {
+    set(target, key, value) { if (key === 'stage') stages.push(value); target[key] = value; return true; },
+  });
+  let waits = 0;
+  const fakePage = {wait: async () => {
+    if (++waits === 2) throw new Error('Form readiness failed');
+    return true;
+  }, evaluate: async () => true};
+  await assert.rejects(() => verifier.clickRecord(fakePage, raw.expected_record_name, progress, 'invoice'));
+  assert.deepEqual(stages, ['native invoice row readiness', 'native invoice record click', 'native invoice form readiness']);
+  assert.equal(progress.expectedRecordName, raw.expected_record_name);
+  assert.ok(!progress.stage.includes('PRIVATE'));
+});
+
+test('record lookup visibility and click are atomic across native row transitions and remain bounded', async () => {
+  const verifier = api();
+  const targetName = 'Expected native invoice';
+  const target = {name: targetName, visible: true};
+  const hidden = {name: targetName, visible: false};
+  function fakePage(snapshots, formName = targetName) {
+    const clicks = [];
+    let snapshot = 0;
+    const page = {clicks, separateEvaluations: 0, polls: 0};
+    const element = (textContent, isVisible = true) => ({textContent,
+      getClientRects: () => isVisible ? [{width: 100, height: 20}] : []});
+    const evaluate = expression => {
+      const rows = snapshots[Math.min(snapshot++, snapshots.length - 1)].map(row => ({
+        ...element(row.name, row.visible), click() { clicks.push({name: row.name, visible: row.visible}); },
+      }));
+      const nameWidget = element(formName);
+      const form = {...element('Native form'), querySelector: selector =>
+        selector === '.o_field_widget[name="name"]' ? nameWidget : null};
+      return vm.runInNewContext(expression, {
+        getComputedStyle: () => ({visibility: 'visible'}),
+        document: {querySelectorAll: () => rows,
+          querySelector: selector => selector === '.o_form_view' && clicks.length ? form : null},
+      });
+    };
+    page.wait = async expression => {
+      for (let attempt = 0; attempt < 5; attempt += 1) {
+        page.polls += 1;
+        const result = evaluate(expression);
+        if (result) return result;
+      }
+      throw new Error('Native UI predicate did not become true before its bounded test deadline');
+    };
+    page.evaluate = async expression => { page.separateEvaluations += 1; return evaluate(expression); };
+    return page;
+  }
+  // Old code sees a row in wait(), then dereferences null in the separate evaluate().
+  const detaching = fakePage([[target], []]);
+  await assert.doesNotReject(() => verifier.clickRecord(detaching, targetName, {}, 'invoice'));
+  assert.deepEqual(detaching.clicks, [target]);
+  assert.equal(detaching.separateEvaluations, 0);
+  const transitioning = fakePage([[], [hidden], [{name: 'Another invoice', visible: true}], [target]]);
+  await assert.doesNotReject(() => verifier.clickRecord(transitioning, targetName, {}, 'invoice'));
+  assert.deepEqual(transitioning.clicks, [target]);
+  assert.ok(transitioning.polls >= 4);
+  for (const rows of [[], [hidden], [{name: 'Another invoice', visible: true}]]) {
+    const missing = fakePage([rows]);
+    await assert.rejects(() => verifier.clickRecord(missing, targetName, {}, 'invoice'));
+    assert.deepEqual(missing.clicks, []);
+    assert.equal(missing.polls, 5);
+  }
+  const wrongForm = fakePage([[target]], 'Different form document');
+  await assert.rejects(() => verifier.clickRecord(wrongForm, targetName, {}, 'invoice'));
 });
 
 test('Chrome startup diagnostics classify bounded stderr without exposing private text paths or environment', () => {
