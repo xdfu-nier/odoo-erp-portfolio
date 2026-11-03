@@ -2,7 +2,6 @@
 
 // Node 22 built-ins and the existing Chrome binary only. No browser packages.
 const fs = require('node:fs');
-const os = require('node:os');
 const path = require('node:path');
 const childProcess = require('node:child_process');
 
@@ -652,9 +651,25 @@ function safeWrite(filename, data) {
   try { fs.writeFileSync(descriptor, data); } finally { fs.closeSync(descriptor); }
 }
 
+function createChromeLaunch(args, parentEnvironment = process.env) {
+  // Chromium's Linux singleton uses OS TMPDIR for Unix IPC; profile/cache arguments stay project-local.
+  const directory = fs.mkdtempSync(path.join(fs.realpathSync('/tmp'), 'odoo-cdp-'));
+  fs.chmodSync(directory, 0o700);
+  const owned = fs.lstatSync(directory);
+  return {args: [...args], env: {...parentEnvironment, TMPDIR: directory}, ipcDirectory: directory,
+    cleanup(child) {
+      requireEvidence(!child || child.exitCode !== null || child.signalCode !== null);
+      let current;
+      try { current = fs.lstatSync(directory); } catch (error) { if (error.code === 'ENOENT') return; throw error; }
+      requireEvidence(current.isDirectory() && !current.isSymbolicLink() && current.uid === process.getuid() &&
+        current.dev === owned.dev && current.ino === owned.ino);
+      fs.rmSync(directory, {recursive: true, force: false});
+    }};
+}
+
 async function main(argv = process.argv.slice(2)) {
   const progress = {role: 'input', stage: 'validation'};
-  let options, profile, chrome, cdp, startup;
+  let options, profile, chrome, cdp, startup, launch;
   try {
     options = parseArgs(argv);
     const inputs = readInputs(options);
@@ -664,12 +679,13 @@ async function main(argv = process.argv.slice(2)) {
     fs.mkdirSync(options.outputDir, {recursive: true});
     profile = fs.mkdtempSync(path.join(options.outputDir, '.chrome-'));
     progress.stage = 'existing Chrome startup';
-    startup = {binary, started_at: Date.now(), stderr: Buffer.alloc(0)};
-    chrome = childProcess.spawn(binary, ['--headless=new', '--no-first-run', '--no-default-browser-check',
+    launch = createChromeLaunch(['--headless=new', '--no-first-run', '--no-default-browser-check',
       '--disable-background-networking', '--disable-component-update', '--disable-sync', '--disable-extensions',
       '--disable-default-apps', '--metrics-recording-only', '--no-pings', '--no-sandbox',
       '--remote-debugging-address=127.0.0.1', '--remote-debugging-port=0',
-      `--user-data-dir=${profile}`, `--disk-cache-dir=${path.join(profile, 'cache')}`, 'about:blank'], {stdio: ['ignore', 'ignore', 'pipe']});
+      `--user-data-dir=${profile}`, `--disk-cache-dir=${path.join(profile, 'cache')}`, 'about:blank']);
+    startup = {binary, started_at: Date.now(), stderr: Buffer.alloc(0)};
+    chrome = childProcess.spawn(binary, launch.args, {env: launch.env, stdio: ['ignore', 'ignore', 'pipe']});
     chrome.stderr.on('data', chunk => {
       const remaining = 8192 - startup.stderr.length;
       if (remaining > 0) startup.stderr = Buffer.concat([startup.stderr, chunk.subarray(0, remaining)]);
@@ -699,7 +715,7 @@ async function main(argv = process.argv.slice(2)) {
       stderr: startup.stderr.toString('utf8'), binary: startup.binary, spawn_code: startup.spawn_code,
       exit_code: chrome?.exitCode, signal: chrome?.signalCode, duration_ms: Date.now() - startup.started_at,
       port_file_present: !!startup.port_file && fs.existsSync(startup.port_file),
-      tmpdir_exists: fs.existsSync(os.tmpdir()), timed_out: startup.timed_out,
+      tmpdir_exists: !!launch?.env.TMPDIR && fs.existsSync(launch.env.TMPDIR), timed_out: startup.timed_out,
       debugging_loopback: chrome?.spawnargs.includes('--remote-debugging-address=127.0.0.1'),
     }) : undefined;
     const report = {ok: false, role: progress.role, stage: progress.stage,
@@ -722,10 +738,11 @@ async function main(argv = process.argv.slice(2)) {
         await new Promise(resolve => { chrome.once('exit', resolve); setTimeout(resolve, 3000); });
       }
     }
+    if (launch) launch.cleanup(chrome);
     if (profile) fs.rmSync(profile, {recursive: true, force: true});
   }
 }
 
 module.exports = {parseArgs, readInputs, validateRoleReport, classifyListRows, collectValidatedList, validateListEvidence, validateDomEvidence,
-  validateBrowserReport, sanitizeDiagnostics, chromeStartupDiagnostics, main};
+  validateBrowserReport, sanitizeDiagnostics, chromeStartupDiagnostics, createChromeLaunch, main};
 if (require.main === module) main().then(status => { process.exitCode = status; });

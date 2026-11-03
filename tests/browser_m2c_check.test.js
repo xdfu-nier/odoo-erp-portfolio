@@ -496,6 +496,99 @@ test('Chrome startup diagnostics classify bounded stderr without exposing privat
   }
 });
 
+test('Chrome child gets a short private OS IPC directory while parent environment and profile cache arguments stay unchanged', () => {
+  const verifier = api();
+  assert.equal(typeof verifier.createChromeLaunch, 'function', 'Private short Chrome IPC launch factory is missing');
+  const base = path.join(ROOT, '.runtime', 'tests');
+  fs.mkdirSync(base, {recursive: true});
+  const directory = fs.mkdtempSync(path.join(base, 'chrome-ipc-env-'));
+  let launch;
+  try {
+    const parentTmpdir = path.join(directory, 'long-parent-directory-'.repeat(7));
+    fs.mkdirSync(parentTmpdir);
+    const parent = Object.freeze({TMPDIR: parentTmpdir, PATH: '/test/bin', PARENT_SENTINEL: 'preserved'});
+    const profile = path.join(directory, 'project-profile');
+    const args = [`--user-data-dir=${profile}`, `--disk-cache-dir=${path.join(profile, 'cache')}`,
+      '--remote-debugging-address=127.0.0.1', '--remote-debugging-port=0'];
+    const originalArgs = [...args];
+    const originalProcessTmpdir = process.env.TMPDIR;
+    launch = verifier.createChromeLaunch(args, parent);
+    assert.deepEqual(launch.args, originalArgs);
+    assert.deepEqual(args, originalArgs);
+    assert.deepEqual(parent, {TMPDIR: parentTmpdir, PATH: '/test/bin', PARENT_SENTINEL: 'preserved'});
+    assert.ok(process.env.TMPDIR === originalProcessTmpdir, 'The parent process TMPDIR must not change');
+    assert.equal(launch.env.PATH, parent.PATH);
+    assert.equal(launch.env.PARENT_SENTINEL, parent.PARENT_SENTINEL);
+    assert.notEqual(launch.env.TMPDIR, parentTmpdir);
+    assert.equal(launch.env.TMPDIR, launch.ipcDirectory);
+    assert.equal(path.dirname(launch.ipcDirectory), fs.realpathSync('/tmp'));
+    assert.ok(path.basename(launch.ipcDirectory).startsWith('odoo-cdp-'));
+    assert.ok(Buffer.byteLength(launch.ipcDirectory) < 64, 'IPC directory must leave room for the native Unix socket suffix');
+    const info = fs.lstatSync(launch.ipcDirectory);
+    assert.equal(info.isDirectory(), true);
+    assert.equal(info.mode & 0o777, 0o700);
+    assert.equal(info.uid, process.getuid());
+  } finally {
+    if (launch) launch.cleanup({exitCode: 0, signalCode: null});
+    fs.rmSync(directory, {recursive: true, force: true});
+  }
+});
+
+test('owned Chrome IPC cleanup waits for child exit and removes only its directory after success or failure', () => {
+  const verifier = api();
+  assert.equal(typeof verifier.createChromeLaunch, 'function', 'Private short Chrome IPC launch factory is missing');
+  const unrelated = fs.mkdtempSync(path.join(fs.realpathSync('/tmp'), 'chrome-unit-unrelated-'));
+  const marker = path.join(unrelated, 'preserve.txt');
+  fs.writeFileSync(marker, 'unrelated owned unit fixture');
+  try {
+    for (const child of [{exitCode: 0, signalCode: null}, {exitCode: 1, signalCode: null},
+      {exitCode: null, signalCode: 'SIGABRT'}]) {
+      const launch = verifier.createChromeLaunch([], {TMPDIR: unrelated});
+      try {
+        fs.writeFileSync(path.join(launch.ipcDirectory, 'native-ipc-placeholder'), 'owned IPC');
+        assert.throws(() => launch.cleanup({exitCode: null, signalCode: null}));
+        assert.equal(fs.existsSync(launch.ipcDirectory), true);
+        launch.cleanup(child);
+        assert.equal(fs.existsSync(launch.ipcDirectory), false);
+        assert.equal(fs.readFileSync(marker, 'utf8'), 'unrelated owned unit fixture');
+        assert.equal(launch.env.TMPDIR !== unrelated, true);
+      } finally {
+        launch.cleanup(child);
+      }
+    }
+  } finally {
+    fs.rmSync(unrelated, {recursive: true, force: true});
+  }
+});
+
+test('owned Chrome IPC cleanup never follows nested or replaced-root symlinks into another directory', () => {
+  const verifier = api();
+  assert.equal(typeof verifier.createChromeLaunch, 'function', 'Private short Chrome IPC launch factory is missing');
+  const other = fs.mkdtempSync(path.join(fs.realpathSync('/tmp'), 'chrome-unit-symlink-target-'));
+  const marker = path.join(other, 'preserve.txt');
+  fs.writeFileSync(marker, 'preserve target');
+  let nested, replaced, moved;
+  const exited = {exitCode: 0, signalCode: null};
+  try {
+    nested = verifier.createChromeLaunch([], {});
+    fs.symlinkSync(other, path.join(nested.ipcDirectory, 'external-ipc-link'));
+    nested.cleanup(exited);
+    assert.equal(fs.readFileSync(marker, 'utf8'), 'preserve target');
+    replaced = verifier.createChromeLaunch([], {});
+    moved = replaced.ipcDirectory + '.unit-owned-moved';
+    fs.renameSync(replaced.ipcDirectory, moved);
+    fs.symlinkSync(other, replaced.ipcDirectory);
+    assert.throws(() => replaced.cleanup(exited));
+    assert.equal(fs.lstatSync(replaced.ipcDirectory).isSymbolicLink(), true);
+    assert.equal(fs.readFileSync(marker, 'utf8'), 'preserve target');
+  } finally {
+    if (nested && fs.existsSync(nested.ipcDirectory)) nested.cleanup(exited);
+    if (replaced && fs.existsSync(replaced.ipcDirectory)) fs.unlinkSync(replaced.ipcDirectory);
+    if (moved) fs.rmSync(moved, {recursive: true, force: true});
+    fs.rmSync(other, {recursive: true, force: true});
+  }
+});
+
 test('every role screenshot is a unique safe relative PNG under the chosen runtime output', () => {
   const verifier = api();
   for (const screenshot of ['../sales.png', '/tmp/sales.png', 'file:///tmp/sales.png',
