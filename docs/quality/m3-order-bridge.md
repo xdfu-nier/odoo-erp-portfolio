@@ -123,3 +123,15 @@ Settings明确准备原生ir.cron，固定Job模型/代码、来源专用Operato
 初始28项实际RED后实现；规格审查新增私有计划校验和向导查询资格的两个反例，实际13个失败子场景后补齐。最终**30项UI post-tests零失败/零错误**，13.69秒、22784次查询（`.runtime/m3d-console-capability-green.log`）。完整**549项post-tests零失败/零错误**，2026-11-04 06:56:13 UTC，343.13秒、566194次查询（`.runtime/m3d-console-reviewed-full-native.log`）。92项Python、27项Node、Ruff及独立规格/质量审查通过。
 
 这些是原生视图、表单和动作服务验证，不代替真实浏览器操作或完整人工UAT。隔离本地角色数据、认证HTTP/浏览器、当前新提交CI与M3最终交付仍待完成。
+
+## 本地隔离 profile 准备器
+
+2026-11-04，代码`22765de`：显式allow-local、实际loopback和两库白名单、实际Settings维护入口；只创建独立namespace的三位新角色、两件新商品/模板/供应商、专属客户/供应商、来源/映射及停用cron，共17个标识。M1的19个原始标识、A/B角色及现有库存/配置保持，M2已标记CNY价目表只读复用；不创建任务、报价、库存或财务单据。
+
+来源/映射/cron业务配置实际由新普通Settings执行，Operator只有基础Sales与处理组，Integration无业务权限，三者单公司/inbox/.invalid。原生技术UID1默认inactive，准备器不激活它；仅在实际UID1+su维护路径允许bootstrap，其余inactive用户与Sales.sudo仍拒绝。权限精确比较包含Odoo为inbox通知自动添加的原生组，没有扩大业务权限。
+
+独立600三角色凭据文件只原子创建一次，旧七角色文件不变；CLI无效目标/配置/路径在Odoo导入或凭据创建前拒绝，stdout仅安全稳定报告。profile自己的保存点、命名空间技术锁394与完整标识/角色/目标/密码hash只读验证，未知同名或缺失/被修改数据拒绝，不接管、不重建或覆盖用户设置，重复不调用任何配置create/write/cron准备动作。
+
+纯22项及原生22项先实际RED；最终聚焦22项post-tests零失败/零错误，65.58秒、123970次查询（`.runtime/m3-local-profile-native-green-v3.log`）。完整**571项post-tests零失败/零错误**，2026-11-04 08:11:33 UTC，428.66秒、700804次查询（`.runtime/m3-local-profile-full-native.log`）。114项Python、27项Node、Ruff与独立规格/质量审查通过。
+
+全量纯测试发现临时目录已按项目规范指向runtime/tmp，已将越界路径反例改为独立且确定的目录，生产允许范围保持。开发库尚未安装/运行此profile；完整导入流程、真实角色HTTP/浏览器及最终CI仍待后续验证。
