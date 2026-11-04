@@ -105,3 +105,21 @@ Linux日志实际记录四次第三连接阻塞观察、四次SQLSTATE40001、�
 根代理聚焦 `.runtime/m3d-worker-concurrency-native.log`：4项post-tests零失败/零错误，8.13秒、11369次查询，真实退出73、Lock/40001均有日志。完整 **519项post-tests零失败/零错误**，2026-11-04 05:52:33 UTC结束，309.65秒、527431次查询（`.runtime/m3d-worker-recovery-full-native.log`）。92项Python、27项Node、Ruff及独立规格/质量审查通过。
 
 UAT-016—018/024的上述服务端自动化场景有真实事务/进程证据；新提交的GitHub CI还需单独核对。cron、界面、隔离本地样例及认证HTTP/浏览器、M3最终交付和M4仍未完成；完整人工UAT仍单独记录。
+
+## 实际进程恢复版本的 GitHub CI
+
+提交`7de23ddde4c2c9a8c5684d0e63db55dc18dc2e11`的[PR工作流](https://github.com/xdfu-nier/odoo-erp-portfolio/actions/runs/41782798413)及[push工作流](https://github.com/xdfu-nier/odoo-erp-portfolio/actions/runs/41782792536)四个任务成功。下载PR制品到`.runtime/m3-recovery-ci`核对21个白名单文件；Linux **519项post-tests零失败/零错误**，2026-11-04 06:06:15 UTC，176.43秒、440780次查询。
+
+实际日志记录退出73前已flush报价及两行，父测试复验回滚与唯一恢复；工作器/重试竞争和7任务SKIP LOCKED均在此CI实际执行。准备和履约两次报告各自相同、七角色HTTP/浏览器`ok=true`、七PNG签名有效，库存10/净交付90/净过账7650对平。界面与cron代码仍在后续阶段，本提交不证明尚未发布的新界面。
+
+## M3d 原生角色操作界面、重试向导和停用计划
+
+2026-11-04，模块`18.0.1.3.0`，代码`3ba2359`。Settings维护来源/客户及SKU映射，Integration/Operator只读任务/尝试，处理账号通过动作处理本队列、打开原生报价或带原因重试；其他销售账号不获得导入原始载荷菜单。
+
+实际原生Form覆盖新来源公司/代码可输入且保存后只读、映射来源预填/目标修复、readonly默认job带force_save的原因向导创建和apply。未保存NewId预览也核对当前实际Operator/failed任务，已有origin继续核对创建人。向导读取、id-only web_read、查询/计数/原因分组、导出、修改和apply统一检查当前处理资格与来源/公司/创建人，实际uid1的原生autovacuum保留。
+
+Settings明确准备原生ir.cron，固定Job模型/代码、来源专用Operator、1分钟周期且默认inactive；重复准备复用原ID并保留当前启用状态，错误模型/代码/账号/间隔或跨来源关联拒绝，不接管他人cron。Company→Source锁序与外键协议一致，关联字段禁止直接/默认值注入。原生server action以cron.user_id实际运行并生成Operator创建的报价，无全局cron管理权限授予；项目max_cron_threads=0保持。
+
+初始28项实际RED后实现；规格审查新增私有计划校验和向导查询资格的两个反例，实际13个失败子场景后补齐。最终**30项UI post-tests零失败/零错误**，13.69秒、22784次查询（`.runtime/m3d-console-capability-green.log`）。完整**549项post-tests零失败/零错误**，2026-11-04 06:56:13 UTC，343.13秒、566194次查询（`.runtime/m3d-console-reviewed-full-native.log`）。92项Python、27项Node、Ruff及独立规格/质量审查通过。
+
+这些是原生视图、表单和动作服务验证，不代替真实浏览器操作或完整人工UAT。隔离本地角色数据、认证HTTP/浏览器、当前新提交CI与M3最终交付仍待完成。

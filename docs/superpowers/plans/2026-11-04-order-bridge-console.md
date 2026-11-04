@@ -20,7 +20,7 @@
 
 ### Task 1: 原生界面与授权动作
 
-- [ ] **Step 1: 编写失败原生测试，根代理实际RED**
+- [x] **Step 1: 编写失败原生测试，根代理实际RED**
 
 `TestImportUI`以post_install/-at_install标记。setUp先断言动作入口/向导/视图存在，再建立现有普通Settings/Integration/Operator/Sales及有效映射夹具。失败测试应因未实现动作断言失败，不因ref缺失或测试发现错误。
 
@@ -30,11 +30,11 @@
 
 原生cron配置验证实际用户是专用Operator、公司/来源一致、固定model_id与代码、默认inactive、重复准备复用同一cron不改变既有active状态、不支持任意模型/代码/账号注入。通过该cron的原生server action以cron.user_id实际运行，验证报价create_uid为Operator、不是Settings/sudo。不得给Operator全局cron管理权限。
 
-- [ ] **Step 2: 根代理运行RED**
+- [x] **Step 2: 根代理运行RED**
 
 根代理固定源码、当前worktree和专用库，`-u portfolio_order_bridge --test-tags /portfolio_order_bridge:TestImportUI --stop-after-init --http-port=8077`，日志`.runtime/m3d-console-red.log`。确认真实缺失功能失败后授权实现。
 
-- [ ] **Step 3: 原生页面及public动作**
+- [x] **Step 3: 原生页面及public动作**
 
 统一菜单父项为`portfolio_trade.menu_portfolio_root`。设置用户看到来源、客户映射和商品映射维护；Integration/Operator看到外部订单只读队列与尝试详情；其他业务角色看原生报价，不获得原始载荷或导入审计菜单。
 
@@ -44,7 +44,7 @@ Odoo18使用`list,form`和表达式modifiers，不用旧attrs。来源新建时�
 
 动作签名：`job.action_process_pending()`处理本人获授权队列的固定批次并返回通知/刷新；传入记录时也检查其当前读取/来源权限，不借错误选择触发其他队列。`job.action_open_retry()`仅所属Operator的failed单任务，返回原因向导；`job.action_open_sale_order()`检查当前角色对真实报价的原生read权限后返回form动作。来源提供`action_open_customer_mappings()`和`action_open_product_mappings()`，仅Settings/所属Operator且当前来源可读，返回精确来源domain，不返回sudo记录。
 
-- [ ] **Step 4: 原因向导及默认停用cron**
+- [x] **Step 4: 原因向导及默认停用cron**
 
 `portfolio.import.retry`包含readonly job_id、派生公司及required reason。创建/读取/web_read/写入/apply都恢复实际Operator并核对当前job来源、公司和状态；向导创建后禁止换绑job，其他用户不能读或复用其向导，授权撤销后旧向导不可继续查看。界面readonly job字段使用force_save确保显式ID传入，不能只依赖caller context default。`action_apply()`调用既有`job.action_retry(reason)`，完成后关闭并刷新。
 
@@ -56,6 +56,8 @@ Odoo18使用`list,form`和表达式modifiers，不用旧attrs。来源新建时�
 
 项目原生开发配置`max_cron_threads=0`继续默认手动处理。文档说明如需自动处理，需明确启用专用cron并在项目配置启用cron线程后重启；本地验收不自动启用。测试以原生server action在cron.user_id下运行验证业务身份，不给Operator全局cron读写权，不覆写上游cron安全逻辑。
 
-- [ ] **Step 5: 根代理GREEN、回归、两阶段审查**
+- [x] **Step 5: 根代理GREEN、回归、两阶段审查**
 
 根代理聚焦UI及已有工作器/重试，再完整两模块原生、92项Python、27项Node、Ruff。审核对象视图与动作在普通角色下可打开，原因输入能触发真实状态/审计变化，privatefields/othercompany/fakecontext反例拒绝。先独立规格、后质量审查；修复先实际失败证据，再最小实现。通过后提交自有文件并更新实际结果；真实HTTP/browser验证不提前宣布完成。
+
+实际结果：2026-11-04，先28项缺少动作的真实RED，完成原生表单、角色菜单、原因向导和默认停用cron。规格审查补齐私有cron校验独立授权及向导查询/聚合当前处理资格：2项新用例实际13个失败子场景后修复，30项UI原生测试零失败/零错误，13.69秒、22784次查询（`.runtime/m3d-console-capability-green.log`）。完整549项post-tests零失败/零错误，06:56:13 UTC，343.13秒、566194次查询（`m3d-console-reviewed-full-native.log`）；92项Python、27项Node、Ruff及独立规格/质量审查通过。源代码提交3ba2359，真实角色浏览器及本地完整流程尚未验收。
