@@ -14,6 +14,7 @@ SALES = "sales_team.group_sale_salesman"
 CONFIG_GROUPS = f"{SETTINGS},{OPERATOR}"
 FORBIDDEN_GROUPS = (
     SETTINGS, "base.group_erp_manager", "sales_team.group_sale_manager",
+    "sales_team.group_sale_salesman_all_leads",
     "purchase.group_purchase_user", "stock.group_stock_user", "account.group_account_invoice",
 )
 

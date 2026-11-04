@@ -101,4 +101,40 @@
         <field name="perm_create" eval="False"/>
         <field name="perm_unlink" eval="False"/>
     </record>
+    <record id="rule_import_attempt_company" model="ir.rule">
+        <field name="name">Import attempts: active allowed companies</field>
+        <field name="model_id" ref="model_portfolio_import_attempt"/>
+        <field name="domain_force">[('company_id', 'in', company_ids)]</field>
+    </record>
+    <record id="rule_import_attempt_integration" model="ir.rule">
+        <field name="name">Import attempts: authorized source integrations</field>
+        <field name="model_id" ref="model_portfolio_import_attempt"/>
+        <field name="domain_force">[('job_id.source_id.integration_user_ids', 'in', [user.id])]</field>
+        <field name="groups" eval="[(4, ref('group_import_integration'))]"/>
+        <field name="perm_write" eval="False"/>
+        <field name="perm_create" eval="False"/>
+        <field name="perm_unlink" eval="False"/>
+    </record>
+    <record id="rule_import_attempt_operator" model="ir.rule">
+        <field name="name">Import attempts: assigned source processor</field>
+        <field name="model_id" ref="model_portfolio_import_attempt"/>
+        <field name="domain_force">[('job_id.source_id.processor_user_id', '=', user.id)]</field>
+        <field name="groups" eval="[(4, ref('group_import_operator'))]"/>
+        <field name="perm_write" eval="False"/>
+        <field name="perm_unlink" eval="False"/>
+    </record>
+    <record id="rule_import_operator_created_quotation" model="ir.rule">
+        <field name="name">Import operator: own created quotations</field>
+        <field name="model_id" ref="sale.model_sale_order"/>
+        <field name="domain_force">[('create_uid', '=', user.id)]</field>
+        <field name="groups" eval="[(4, ref('group_import_operator'))]"/>
+        <field name="perm_unlink" eval="False"/>
+    </record>
+    <record id="rule_import_operator_created_quotation_line" model="ir.rule">
+        <field name="name">Import operator: own created quotation lines</field>
+        <field name="model_id" ref="sale.model_sale_order_line"/>
+        <field name="domain_force">[('create_uid', '=', user.id)]</field>
+        <field name="groups" eval="[(4, ref('group_import_operator'))]"/>
+        <field name="perm_unlink" eval="False"/>
+    </record>
 </odoo>

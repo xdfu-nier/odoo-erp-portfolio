@@ -11,6 +11,7 @@ import threading
 import time
 import traceback
 import uuid
+from unittest.mock import patch
 
 from odoo import SUPERUSER_ID, Command, api
 from odoo.exceptions import UserError
@@ -445,6 +446,186 @@ class TestImportIngressConcurrency(TransactionCase):
         self.assertNotIn("blocked", result)
         self.assertEqual(result["second"], {**result["first"], "reused": True})
         self.assert_race_audit(fixture, original, result, revision=2)
+
+    def test_ingress_insert_and_processing_do_not_deadlock_on_company_source(self):
+        fixture = self.new_source(self.company_b)
+        original = self.payload(fixture)
+        incoming = copy.deepcopy(original)
+        incoming["external_order_id"] = f"RR-NEW-{uuid.uuid4().hex}"
+        incoming["request_id"] = "concurrent-new-reception"
+        company_ids = [fixture["company_id"]]
+        integration_uid = self.company_b["integration_id"]
+        operator_uid = self.company_b["operator_id"]
+        with self.registry.cursor() as cr:
+            env = self.environment(cr, integration_uid, company_ids)
+            self.assert_integration(env, integration_uid, company_ids)
+            first = env[self.JOB].submit_order(original)
+            first_job = self.assert_pending_job(env, fixture, first, original, integration_uid)
+            original_audit = first_job.read([
+                "raw_payload", "canonical_payload", "payload_hash", "submitted_by_id", "received_at",
+            ])[0]
+            sale_orders_before = self.sale_order_count(env, fixture["company_id"])
+            cr.commit()
+
+        result = {"worker_attempts": [], "serialization_codes": [], "errors": {}}
+        ingress_paused = threading.Event()
+        worker_preloaded = threading.Event()
+        release_ingress = threading.Event()
+        stop = threading.Event()
+        job_class = type(self.env[self.JOB])
+        real_configuration = job_class._ingress_configuration
+
+        def pause_after_real_configuration(records, source, data):
+            value = real_configuration(records, source, data)
+            if records.env.uid == integration_uid and source.id == fixture["source_id"]:
+                # All actual authorization, source UPDATE and configuration
+                # checks have run. The next ordinary operation inserts a job
+                # with native source/company foreign keys in this transaction.
+                result["ingress_snapshot"] = self.transaction_snapshot(records.env, fixture)
+                ingress_paused.set()
+                if not release_ingress.wait(12):
+                    raise AssertionError("The concurrent ingress insert was not released")
+            return value
+
+        def ingress_thread():
+            try:
+                with self.registry.cursor() as cr:
+                    self.bounded_transaction(cr)
+                    env = self.environment(cr, integration_uid, company_ids)
+                    self.assert_integration(env, integration_uid, company_ids)
+                    response = env[self.JOB].submit_order(incoming)
+                    if stop.is_set():
+                        cr.rollback()
+                        return
+                    cr.commit()
+                    result["incoming"] = response
+            except BaseException as error:
+                result["errors"]["ingress"] = error
+                ingress_paused.set()
+
+        def processing_thread():
+            try:
+                for attempt in range(5):
+                    if stop.is_set():
+                        return
+                    with self.registry.cursor() as cr:
+                        self.bounded_transaction(cr)
+                        env = self.environment(cr, operator_uid, company_ids)
+                        self.assertEqual(env.uid, operator_uid)
+                        self.assertFalse(env.su)
+                        self.assertTrue(env.user.active)
+                        self.assertFalse(env.user.share)
+                        self.assertTrue(env.user.has_group(self.OPERATOR))
+                        self.assertTrue(env.user.has_group(self.SALES))
+                        self.assertEqual(env.user.company_ids.ids, company_ids)
+                        self.assertEqual(env.companies.ids, company_ids)
+                        for group in (*self.FORBIDDEN, "sales_team.group_sale_salesman_all_leads"):
+                            self.assertFalse(env.user.has_group(group), group)
+                        result["worker_attempts"].append(self.transaction_snapshot(env, fixture))
+                        worker_preloaded.set()
+                        try:
+                            env[self.JOB]._process_pending()
+                            if stop.is_set():
+                                cr.rollback()
+                                return
+                            cr.commit()
+                            result["worker_committed"] = True
+                            return
+                        except SerializationFailure as error:
+                            cr.rollback()
+                            result["serialization_codes"].append(error.pgcode)
+                            _logger.info("Ingress/worker source %s SQLSTATE %s fresh worker retry %s",
+                                         fixture["source_id"], error.pgcode, attempt + 1)
+                raise AssertionError("The ingress/worker race exhausted fresh worker transactions")
+            except BaseException as error:
+                # A native 40P01 is deliberately terminal evidence, never
+                # swallowed by the allowed repeatable-read 40001 retry path.
+                result["errors"]["worker"] = error
+                worker_preloaded.set()
+
+        threads = [
+            threading.Thread(target=ingress_thread, daemon=True,
+                             name=f"new-ingress-{fixture['source_id']}"),
+            threading.Thread(target=processing_thread, daemon=True,
+                             name=f"processing-ingress-{fixture['source_id']}"),
+        ]
+        with patch.object(job_class, "_ingress_configuration", pause_after_real_configuration):
+            try:
+                threads[0].start()
+                self.assertTrue(ingress_paused.wait(10), "Ingress did not reach its real pre-insert boundary")
+                if result["errors"]:
+                    raise next(iter(result["errors"].values()))
+                self.assertEqual(result["ingress_snapshot"]["revision"], 2)
+                threads[1].start()
+                self.assertTrue(worker_preloaded.wait(10), "The ordinary worker transaction did not preload")
+                if result["errors"]:
+                    raise next(iter(result["errors"].values()))
+                worker = result["worker_attempts"][0]
+                ingress = result["ingress_snapshot"]
+                self.assertEqual(worker["revision"], 1)
+                self.assertNotEqual(worker["pid"], ingress["pid"])
+                self.assertNotEqual(worker["txid"], ingress["txid"])
+                deadline = time.monotonic() + 10
+                with self.registry.cursor() as observer:
+                    observer.execute("SELECT pg_backend_pid()")
+                    observer_pid = observer.fetchone()[0]
+                    self.assertNotIn(observer_pid, [worker["pid"], ingress["pid"]])
+                    while time.monotonic() < deadline:
+                        observer.execute("SELECT pg_stat_clear_snapshot()")
+                        observer.execute(
+                            "SELECT wait_event_type, pg_blocking_pids(pid) FROM pg_stat_activity WHERE pid = %s",
+                            [worker["pid"]],
+                        )
+                        row = observer.fetchone()
+                        if row and row[0] == "Lock" and ingress["pid"] in row[1]:
+                            result["observed_lock_wait"] = True
+                            _logger.info("Ingress/worker source %s observer PID %s saw worker PID %s blocked by ingress PID %s before new-job insert",
+                                         fixture["source_id"], observer_pid, worker["pid"], ingress["pid"])
+                            break
+                        if not threads[1].is_alive():
+                            break
+                        stop.wait(0.01)
+                self.assertTrue(result.get("observed_lock_wait"), f"No native ingress/worker wait: {result}")
+                release_ingress.set()
+                for thread in threads:
+                    thread.join(25)
+                self.assertTrue(all(not thread.is_alive() for thread in threads),
+                                "Ingress/worker transactions did not finish within bounded time")
+            finally:
+                stop.set()
+                release_ingress.set()
+                for thread in threads:
+                    if thread.ident is not None:
+                        thread.join(25)
+                self.assertTrue(all(not thread.is_alive() for thread in threads),
+                                "Ingress/worker transactions failed bounded cleanup")
+        error_codes = {name: getattr(error, "pgcode", None) for name, error in result["errors"].items()}
+        self.assertNotIn("40P01", error_codes.values(), f"Native company/source FK deadlock: {error_codes}")
+        if result["errors"]:
+            raise next(iter(result["errors"].values()))
+        self.assertTrue(result.get("worker_committed"), result)
+        self.assertIn("incoming", result)
+        self.assertEqual(result["serialization_codes"], ["40001"] * len(result["serialization_codes"]))
+        self.assertEqual(len({item["txid"] for item in result["worker_attempts"]}),
+                         len(result["worker_attempts"]))
+        with self.registry.cursor() as cr:
+            env = self.environment(cr, integration_uid, company_ids)
+            jobs = env[self.JOB].search([("source_id", "=", fixture["source_id"])], order="id")
+            self.assertEqual(jobs.ids, [first["job_id"], result["incoming"]["job_id"]])
+            self.assertEqual(jobs.mapped("state"), ["failed", "failed"])
+            self.assertEqual(jobs.mapped("attempt_count"), [1, 1])
+            self.assertFalse(jobs.sale_order_id)
+            self.assertEqual(jobs[:1].read(list(original_audit.keys() - {"id"}))[0], original_audit)
+            normalized = normalize_order_payload(incoming)
+            self.assertEqual(jobs[-1].raw_payload, normalized.raw_json)
+            self.assertEqual(jobs[-1].canonical_payload, normalized.canonical_json)
+            self.assertEqual(jobs[-1].payload_hash, normalized.payload_hash)
+            self.assertEqual(jobs[-1].submitted_by_id.id, integration_uid)
+            self.assertEqual(self.sale_order_count(env, fixture["company_id"]), sale_orders_before)
+            events = env["portfolio.import.attempt"].search([("job_id", "in", jobs.ids)], order="job_id")
+            self.assertEqual(events.mapped("job_id").ids, jobs.ids)
+            self.assertEqual(events.mapped("event_type"), ["failed", "failed"])
+            self.assertEqual(events.mapped("actor_id").ids, [operator_uid])
 
     def test_same_external_identity_is_separate_for_owned_sources_and_companies(self):
         external_order_id = f"RR-SHARED-{uuid.uuid4().hex}"

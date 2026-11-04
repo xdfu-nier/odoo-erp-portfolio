@@ -112,3 +112,94 @@ class ImportIngressCase(TransactionCase):
 
     def job(self, response, user=None):
         return self.actor(user=user).browse(response["job_id"])
+
+
+class ImportWorkerCase(ImportIngressCase):
+    """Worker fixtures without inheriting or duplicating any test methods."""
+
+    ATTEMPT = "portfolio.import.attempt"
+
+    def setUp(self):
+        super().setUp()
+        self.assertTrue(callable(getattr(self.env[self.JOB], "_process_pending", None)),
+                        "M3 quotation worker entry is missing")
+        self.assertIn(self.ATTEMPT, self.env.registry, "M3 immutable attempt model is missing")
+        self.assertTrue(callable(getattr(self.env[self.JOB], "action_retry", None)),
+                        "M3 manual retry entry is missing")
+        self.sequence = 0
+        self.source_a = self.source()
+        self.source_b = self.source(self.company_b)
+        self.other_source = self.source(
+            processor_user_id=self.other_operator.id,
+            integration_user_ids=[Command.set(self.other_integration.ids)],
+        )
+        self.company_a.with_user(self.settings).with_context(
+            allowed_company_ids=self.companies.ids,
+        ).write({
+            "portfolio_masterdata_enabled": True, "portfolio_approval_enabled": True,
+            "portfolio_approval_discount": 10, "portfolio_approval_amount": 10000,
+        })
+        self.customer = self.native["res.partner"].create({
+            "name": "Worker native customer", "ref": "WORKER-CUSTOMER",
+            "company_id": self.company_a.id,
+        })
+        self.vendor = self.native["res.partner"].create({
+            "name": "Worker native supplier", "ref": "WORKER-VENDOR",
+            "company_id": self.company_a.id,
+        })
+        category = self.native["uom.category"].create({"name": "Worker exact quantities"})
+        self.unit = self.native["uom.uom"].create({
+            "name": "Worker half-unit", "category_id": category.id,
+            "uom_type": "reference", "rounding": 0.5,
+        })
+        self.products = self.native["product.product"]
+        for index in (1, 2):
+            product = self.native["product.product"].create({
+                "name": f"Worker industrial item {index}", "default_code": f"WORKER-SKU-{index}",
+                "company_id": self.company_a.id, "type": "consu", "is_storable": True,
+                "invoice_policy": "delivery", "uom_id": self.unit.id, "uom_po_id": self.unit.id,
+                "taxes_id": [Command.clear()], "supplier_taxes_id": [Command.clear()],
+            })
+            self.native["product.supplierinfo"].create({
+                "product_tmpl_id": product.product_tmpl_id.id, "partner_id": self.vendor.id,
+                "company_id": self.company_a.id, "currency_id": self.cny.id, "price": 5,
+            })
+            self.products |= product
+        self.customer_map = self.actor("portfolio.import.customer.map", self.settings).create({
+            "source_id": self.source_a.id, "external_ref": "UNMAPPED-CUSTOMER",
+            "partner_id": self.customer.id,
+        })
+        self.product_maps = self.actor("portfolio.import.product.map", self.settings).create([
+            {"source_id": self.source_a.id, "external_sku": f"UNMAPPED-SKU-{index}",
+             "product_id": product.id}
+            for index, product in enumerate(self.products, 1)
+        ])
+
+    def worker(self, user=None):
+        return self.actor(user=user or self.operator_a)
+
+    def process(self):
+        self.worker()._process_pending()
+        self.env.flush_all()
+        self.env.invalidate_all()
+
+    def attempts(self, job, user=None):
+        return self.actor(self.ATTEMPT, user or self.operator_a).search(
+            [("job_id", "=", job.id)], order="id",
+        )
+
+    def native_counts(self):
+        return {
+            model: self.native[model].search_count([("company_id", "=", self.company_a.id)])
+            for model in ("sale.order", "sale.order.line", "stock.picking", "stock.move",
+                          "purchase.order", "account.move")
+        }
+
+    def failed_job(self):
+        self.customer_map.write({"active": False})
+        self.sequence += 1
+        job = self.job(self.submit(self.payload(external_order_id=f"FAILED-{self.sequence}")),
+                       self.operator_a)
+        self.process()
+        self.assertEqual(job.state, "failed")
+        return job

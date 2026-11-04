@@ -21,6 +21,7 @@ class TestImportConfig(TransactionCase):
     SALES = "sales_team.group_sale_salesman"
     FORBIDDEN = (
         "base.group_system", "base.group_erp_manager", "sales_team.group_sale_manager",
+        "sales_team.group_sale_salesman_all_leads",
         "purchase.group_purchase_user", "stock.group_stock_user", "account.group_account_invoice",
     )
     PRIVATE_FIELDS = (

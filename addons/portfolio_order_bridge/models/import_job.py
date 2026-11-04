@@ -123,6 +123,9 @@ class ImportJob(ImportAccess, models.Model):
     def _ingress_lock(self, source):
         """Write the authorized source row so stale snapshots fail natively."""
         actor, source = self._ingress_authorized_source(source)
+        # Native job company foreign keys take a key-share lock at INSERT.
+        # Follow the worker's company -> source order before holding the source.
+        source.company_id._portfolio_lock_policy()
         source.flush_recordset()
         actor.env.cr.execute("""
             UPDATE portfolio_import_source
