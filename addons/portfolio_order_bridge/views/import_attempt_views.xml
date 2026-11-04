@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_import_attempt_list" model="ir.ui.view">
+        <field name="name">portfolio.import.attempt.list</field>
+        <field name="model">portfolio.import.attempt</field>
+        <field name="arch" type="xml">
+            <list string="Import history / 导入处理记录" create="false" edit="false" delete="false">
+                <field name="job_id" string="Import job / 导入任务"/>
+                <field name="company_id" string="Company / 公司"/>
+                <field name="attempt_no" string="Attempt / 次数"/>
+                <field name="event_type" string="Event / 事件"/>
+                <field name="actor_id" string="Operator / 操作人"/>
+                <field name="started_at" string="Started / 开始时间"/>
+                <field name="finished_at" string="Finished / 完成时间"/>
+                <field name="error_path" string="Error field / 出错字段"/>
+                <field name="error_detail" string="Reason / 处理说明"/>
+                <field name="retry_reason" string="Repair reason / 修复说明"/>
+            </list>
+        </field>
+    </record>
+    <record id="view_import_attempt_form" model="ir.ui.view">
+        <field name="name">portfolio.import.attempt.form</field>
+        <field name="model">portfolio.import.attempt</field>
+        <field name="arch" type="xml">
+            <form string="Import history / 导入处理记录" create="false" edit="false" delete="false" duplicate="false">
+                <sheet>
+                    <group>
+                        <field name="job_id"/>
+                        <field name="company_id"/>
+                        <field name="attempt_no"/>
+                        <field name="event_type"/>
+                        <field name="actor_id"/>
+                        <field name="started_at"/>
+                        <field name="finished_at"/>
+                    </group>
+                    <group string="Processing result / 处理结果">
+                        <field name="error_code"/>
+                        <field name="error_path"/>
+                        <field name="error_detail"/>
+                        <field name="retry_reason"/>
+                    </group>
+                    <notebook>
+                        <page string="Resolved defaults / 当次解析记录" groups="portfolio_order_bridge.group_import_integration,portfolio_order_bridge.group_import_operator">
+                            <field name="mapping_snapshot"/>
+                            <field name="source_defaults_snapshot"/>
+                        </page>
+                    </notebook>
+                </sheet>
+            </form>
+        </field>
+    </record>
+    <record id="action_import_attempts" model="ir.actions.act_window">
+        <field name="name">Import history / 导入处理记录</field>
+        <field name="res_model">portfolio.import.attempt</field>
+        <field name="view_mode">list,form</field>
+    </record>
+</odoo>

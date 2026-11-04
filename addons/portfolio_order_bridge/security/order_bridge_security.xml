@@ -123,6 +123,11 @@
         <field name="perm_write" eval="False"/>
         <field name="perm_unlink" eval="False"/>
     </record>
+    <record id="rule_import_retry_creator" model="ir.rule">
+        <field name="name">Import retry forms: creator and currently assigned failed job</field>
+        <field name="model_id" ref="model_portfolio_import_retry"/>
+        <field name="domain_force">[('create_uid', '=', user.id), ('company_id', 'in', company_ids), ('job_id.state', '=', 'failed'), ('job_id.source_id.active', '=', True), ('job_id.source_id.processor_user_id', '=', user.id)]</field>
+    </record>
     <record id="rule_import_operator_created_quotation" model="ir.rule">
         <field name="name">Import operator: own created quotations</field>
         <field name="model_id" ref="sale.model_sale_order"/>

@@ -10,3 +10,4 @@ access_import_job_integration,Import job Integration,model_portfolio_import_job,
 access_import_job_operator,Import job Operator,model_portfolio_import_job,group_import_operator,1,1,0,0
 access_import_attempt_integration,Import attempt Integration,model_portfolio_import_attempt,group_import_integration,1,0,0,0
 access_import_attempt_operator,Import attempt Operator,model_portfolio_import_attempt,group_import_operator,1,0,1,0
+access_import_retry_operator,Import retry Operator,model_portfolio_import_retry,group_import_operator,1,1,1,1
