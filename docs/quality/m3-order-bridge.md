@@ -64,3 +64,23 @@
 提交`7b57e8b7816925f9e0ed2cc2581886483c8fc3ef`的[PR工作流](https://github.com/xdfu-nier/odoo-erp-portfolio/actions/runs/41613021778)及[push工作流](https://github.com/xdfu-nier/odoo-erp-portfolio/actions/runs/41613011967)共四个任务成功。根代理下载PR白名单制品到`.runtime/m3-ingress-ci`，共21个文件；实际Linux为**486项post-tests零失败/零错误**，2026-11-03 09:48:59 UTC结束，299.49秒、400129次查询。
 
 原生验收准备两次及履约两次报告各自字节相同，HTTP/浏览器报告`ok=true`，七张PNG签名有效；库存10、净交付90、净过账7650对平。此远程提交包含单事务接收，不包含后新增的并发测试`ada102c`，后者发布后须核对新CI。
+
+## 真实并发阶段的实际 GitHub CI
+
+提交`9c047f09ae45ebce2aefa29267dd60df1d446878`的[PR工作流](https://github.com/xdfu-nier/odoo-erp-portfolio/actions/runs/41752911985)及[push工作流](https://github.com/xdfu-nier/odoo-erp-portfolio/actions/runs/41752903425)四个任务成功。下载PR制品到`.runtime/m3-races-ci`并核对21个白名单文件：Linux **490项post-tests零失败/零错误**，2026-11-04 01:24:17 UTC结束，298.20秒、403363次查询。
+
+Linux日志实际记录四次第三连接阻塞观察、四次SQLSTATE40001、新txid及各一次重试；数量/价格冲突保留原任务，等价内容和同内容复用任务。准备/履约两次报告各自字节相同、HTTP和浏览器`ok=true`、七张PNG签名有效，库存10/净交付90/净过账7650对平。工作器、重试和退出恢复代码尚在后续开发，不由此CI结论代替其验收。
+
+## M3c 原生报价工作器与人工重试服务
+
+2026-11-04，模块`18.0.1.2.0`，严格专用测试库；先实际24项缺少工作器的失败，再实现普通Operator+基础Sales创建原生草稿报价。明确Sales负责人、实际Operator创建人、公司/仓库/CNY价目表、原始商品顺序、单位粒度及数量/价格/折扣、免税金额对平；15%折扣的报价由Sales确认时仍被M1审批阻止。处理器不确认、不采购、不发货或开票。
+
+业务创建保存点内注入第二条真实销售行创建后的错误，报价/行/关联业务写入全部回滚，任务和不可变失败尝试留存；未知错误及数据库瞬态向外传播并恢复pending。缺失映射不自动创建主数据；Settings修复后Operator带原因重试，同任务第2次尝试成功，保留failed/retry/done全部审计，重复处理done及重复接收不产生新报价。
+
+权限覆盖实际UID、保留sudo、他人来源与公司、默认字段/状态注入、不可变审计公开CRUD、原始载荷授权撤销后读取。规格审查补全“全部销售单据”组的配置及运行时拒绝：实际2项RED后共享forbidden组增加All Documents，不授予all-leads/经理权限。
+
+质量审查发现接收/工作器真实外键死锁环：接收持有来源行、任务插入等待公司FK key-share，工作器持有公司FOR UPDATE后等待来源。新增确定性双事务反例实际复现PostgreSQL **40P01**（`.runtime/m3c-worker-fk-deadlock-red.log`）。修复为授权后统一**公司→来源**锁序，实际同一用例通过，有第三连接阻塞观察和预期**40001**新事务重试、无40P01，两个任务审计不变（`.runtime/m3c-worker-fk-deadlock-green.log`）。此证据不代替之后的实际进程退出恢复。
+
+最终根代理接入模块**103项post-tests零失败/零错误**，40.18秒、77201次查询（`.runtime/m3c-worker-final-addon.log`）。完整**515项post-tests零失败/零错误**，2026-11-04 05:27:29 UTC结束，304.63秒、508102次查询（`.runtime/m3c-worker-fk-reviewed-full-native.log`）。83项Python、27项Node、完整Ruff及独立规格/质量复审通过。
+
+UAT-014/017的单任务报价、幂等和修复重试已有原生自动化证据；多处理器领取、提交前真实进程退出、定时任务/界面、隔离本地HTTP与最终M3发布尚未执行。之前490项远程CI属于旧提交，不用其结论替代本阶段新代码的CI。

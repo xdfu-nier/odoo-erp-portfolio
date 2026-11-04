@@ -23,7 +23,7 @@
 
 ### Task 1: 工作器、不可变尝试与重试服务
 
-- [ ] **Step 1: 写失败原生测试并冻结**
+- [x] **Step 1: 写失败原生测试并冻结**
 
 每个测试setUp先断言工作器入口/尝试模型存在，再建立真实公司、来源、角色和映射。只使用测试事务，暂不提交夹具。普通Integration先提交pending，普通Operator+Sales处理；映射由普通Settings维护，Sales负责人不同于Operator。
 
@@ -48,11 +48,11 @@ self.assertEqual(job.sale_order_id.create_uid, processor.env.user)
 
 所有新私有入口都测试实际UID能力，含保留sudo、外部来源记录集环境、当前/实际公司变化、非指定处理账号以及假context/default字段；不能仅依赖按钮或公开入口的调用顺序。Operator额外的Sales记录规则仅覆盖其本人创建的订单及对应行，不能据此读取同公司他人的普通报价；任务与载荷仍按当前来源分配隔离，不把业务报价读取与原始载荷授权混为一套规则。
 
-- [ ] **Step 2: 根代理实际RED**
+- [x] **Step 2: 根代理实际RED**
 
 根代理沿用固定源码、根配置、当前worktree addons和严格测试库，`-u portfolio_order_bridge --test-tags /portfolio_order_bridge:TestImportWorker,/portfolio_order_bridge:TestImportRetry`，日志`.runtime/m3c-worker-red.log`。模型/入口缺失应为真实测试断言失败；安装、发现或连接失败须先查环境，不能当RED。根代理确认后解冻实现。
 
-- [ ] **Step 3: 最小权限处理、映射与报价**
+- [x] **Step 3: 最小权限处理、映射与报价**
 
 入口 `_process_pending()` 为私有model方法，固定批次5；使用实际有效内部Operator+基础Sales，单公司且当前范围恰为其公司，拒绝Settings/访问管理/销售经理/采购/仓库/Billing权限组合。按来源指定processor再次检查，不通过sudo建立订单。来源和映射恢复实际用户环境检查，绑定同公司或合法共享对象，未知数据不自动创建。
 
@@ -64,7 +64,7 @@ self.assertEqual(job.sale_order_id.create_uid, processor.env.user)
 
 原生报价的客户/商品/单位和实际商业值必须验证；使用高精度Decimal计算期望免税行金额，按CNY舍入对平原生行/整单，避免大数或精度损失悄悄改变输入。原生M1政策按当前公司继续生效；工作器不修改审批政策或自行确认报价。
 
-- [ ] **Step 4: 保存点、错误与不可变尝试**
+- [x] **Step 4: 保存点、错误与不可变尝试**
 
 任务从pending到processing并增加attempt_count/时间；在业务保存点内创建并验证原生报价。成功时设置done和sale_order_id，追加成功尝试。受控业务错误回滚业务保存点，保存点外设置failed并追加失败尝试。只捕获明确业务异常；SerializationFailure、DeadlockDetected等瞬态错误以及未知异常必须向外传播，使外层事务回滚且仍可恢复pending。
 
@@ -74,8 +74,10 @@ self.assertEqual(job.sale_order_id.create_uid, processor.env.user)
 
 公开 `action_retry(reason)` 只允许所属Operator对failed任务操作，先授权再锁、锁内重验状态，保留原始载荷与失败尝试，追加操作者/时间/原因后回pending。done不可重试；不引入自动重试或后台线程。
 
-- [ ] **Step 5: 根代理GREEN、完整回归与双重审查**
+- [x] **Step 5: 根代理GREEN、完整回归与双重审查**
 
 根代理先聚焦工作器/重试，再完整 `/portfolio_trade,/portfolio_order_bridge`；同时运行83项纯Python、27项Node和Ruff。看真实post-tests统计及活库业务结果，先独立规格、再独立质量审查。发现问题先补反例并实际RED，修复后复验；通过后提交自有文件，更新实际计数与证据。
 
 此任务完成后才能把UAT-014/017中单任务原生报价、失败修复重试部分记为自动化通过。多处理器领取竞争、原生提交前退出恢复、真实角色界面/HTTP、M4备份恢复和性能仍分别保留门禁。
+
+实际结果：2026-11-04先实际运行24项失败测试，确认缺少工作器；实现后24项通过。规格审查补全All Documents越权组的来源/运行时拒绝反例，先实际2项失败再补共享权限检查。质量审查发现接收先锁来源、插入公司外键与工作器先锁公司的隐藏环路；真实双事务复现40P01（`.runtime/m3c-worker-fk-deadlock-red.log`），统一接收公司→来源顺序后同一用例通过，仅出现预期40001新事务重试（`m3c-worker-fk-deadlock-green.log`）。最终103项接入测试、完整515项post-tests零失败/零错误，05:27:29 UTC结束，304.63秒、508102次查询（`m3c-worker-fk-reviewed-full-native.log`）；83项Python、27项Node、Ruff及独立规格/质量复审通过。多工作器/实际进程退出恢复与界面仍未执行。
