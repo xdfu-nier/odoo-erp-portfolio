@@ -105,11 +105,15 @@ class ImportAccess:
         return super(ImportAccess, actor).web_read(specification)
 
     @api.model
+    @api.readonly
+    @api.returns("self")
     def search(self, domain, offset=0, limit=None, order=None):
         actor = self._import_actor()
         return super(ImportAccess, actor).search(domain, offset=offset, limit=limit, order=order)
 
     @api.model
+    @api.readonly
+    @api.returns("self")
     def search_fetch(self, domain, field_names, offset=0, limit=None, order=None):
         actor = self._import_actor()
         actor._import_check_query_fields(domain, field_names, order)
