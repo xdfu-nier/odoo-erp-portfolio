@@ -67,7 +67,7 @@ self.assertFalse(first["sale_order_id"])
 
 ### Task 2: 真正并发幂等
 
-- [ ] **Step 1: 先写独立事务测试，根代理运行**
+- [x] **Step 1: 先写独立事务测试，根代理运行**
 
 `TestImportIngressConcurrency` 只允许数据库严格等于 `odoo_portfolio_m1_test`。借鉴已有进销存并发测试：单独提交 UUID 命名公司、角色、来源等隔离 fixture；共享已加载 registry 给线程的全新 cursor，避免测试 runner registry 锁死。禁止修改全局价目表/用户默认组；若启用 CNY 触发原生隐含组变化，先保存并恢复原有组与成员再提交 fixture。
 
@@ -75,8 +75,10 @@ self.assertFalse(first["sale_order_id"])
 
 另测不同公司或来源的相同外部单号可分别接收；直接 SQL INSERT 违反复合唯一键，证明数据库约束确实存在。SQL 反例只在测试清理保存点内执行，不创建有效业务对象。线程必须限时 join，异常必须传播到测试；不用固定 sleep 假装并发证据。
 
-- [ ] **Step 2: 全量回归、审查和提交**
+- [x] **Step 2: 全量回归、审查和提交**
 
 根代理执行 `/portfolio_trade,/portfolio_order_bridge` 完整原生回归、全部纯 Python、Node27 和 Ruff。先规格、后质量独立审查；任何修复都保留可复现反例。更新 `docs/quality/m3-order-bridge.md` 的实际统计，提交 `feat: persist authorized idempotent order submissions`。
 
 本任务结束只证明任务接收的幂等与隔离；只有 M3c 工作器完成后，才可以核对 UAT-014/016 的“一张销售单”结果，不提前将整个 UAT 标记通过。
+
+实际结果：4项并发测试实际执行4次竞争（同载荷、等价载荷、数量冲突、价格冲突）及3个独立来源/公司接收。每次竞争均由第三连接观察真实Lock和阻塞PID，随后实际SQLSTATE40001，新事务重试1次；原任务审计不变（`.runtime/m3b-ingress-races-native.log`）。这是对Task1已有行为的测试，首次执行通过，无新增生产逻辑，不虚构RED。完整490项post-tests零失败/零错误，2026-11-03 10:00:55 UTC结束，243.00秒、459508次查询（`.runtime/m3b-ingress-races-full-native.log`）；83项Python、27项Node、Ruff与独立规格/质量审查通过。
