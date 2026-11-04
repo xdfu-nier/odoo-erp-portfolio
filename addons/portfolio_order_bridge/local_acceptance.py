@@ -18,6 +18,8 @@ from odoo.addons.portfolio_trade.local_finance import (
 from odoo.exceptions import AccessError, UserError
 from odoo.tools import LazyTranslate
 
+from .local_flow_contract import NAMESPACE as FLOW_NAMESPACE
+from .local_flow_contract import validate_completed as _validate_completed_flow
 from .models.access import FORBIDDEN_GROUPS, INTEGRATION, OPERATOR, SALES
 
 NAMESPACE = "portfolio_order_bridge_acceptance"
@@ -316,10 +318,19 @@ def _validate_bridge(settings, records, acceptance, finance):
     ):
         _conflict("the owned source configuration was modified.")
     source._validate_configuration()
+    # A completed flow owns exactly one additional fixed repair mapping. Its
+    # complete immutable identity/audit contract is read-only and independent
+    # of prepare_local_import, so this cannot recurse into preparation.
+    repair = None
+    if settings["ir.model.data"].sudo().search_count([("module", "=", FLOW_NAMESPACE)]):
+        repair = _validate_completed_flow(settings, records)["product_map_repair"]
     expected_maps = {CUSTOMER_MAP: ["customer_map"], PRODUCT_MAP: [f"product_map_item{index}" for index in (1, 2)]}
     for model, keys in expected_maps.items():
         maps = settings[model].with_context(active_test=False).search([("source_id", "=", source.id)])
-        if set(maps.ids) != {records[key].id for key in keys}:
+        expected_ids = {records[key].id for key in keys}
+        if model == PRODUCT_MAP and repair:
+            expected_ids.add(repair.id)
+        if set(maps.ids) != expected_ids:
             _conflict("the owned source mappings are missing or contain unexpected rows.")
         for key in keys:
             mapping = settings[model].browse(records[key].id)

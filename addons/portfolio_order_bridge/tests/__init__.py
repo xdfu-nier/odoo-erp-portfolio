@@ -7,4 +7,5 @@ from . import (
     test_import_worker,
     test_import_worker_concurrency,
     test_local_acceptance,
+    test_local_import_flow,
 )
