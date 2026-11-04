@@ -42,7 +42,7 @@ Task1实际记录：代码`22765de`，22项纯测试先因缺少凭据/CLI失败
 
 **Files:** 新建 `addons/portfolio_order_bridge/local_import_flow.py`、`scripts/run_local_order_import.py`、对应纯测试及原生测试。
 
-- [ ] **Step 1: 失败测试与角色流程实现**
+- [x] **Step 1: 失败测试与角色流程实现**
 
 动态namespace `portfolio_order_bridge_flow`独立标记两任务/两原生报价、第二SKU修复映射；不把动态数据混入静态profile。普通Integration提交合法单和同内容重发（同任务），普通Operator经公开动作处理第一单为done/draft，Sales负责人尝试确认15%折扣报价仍需审批。第二单使用预留缺失SKU别名，处理后failed且无报价，普通Settings建立精确修复映射，Operator通过真实原因向导apply重排，再处理为done/尝试2，保留failed/retry/done历史。业务API不用sudo，不确认/发货/采购/开票。
 
@@ -55,6 +55,8 @@ Task1实际记录：代码`22765de`，22项纯测试先因缺少凭据/CLI失败
 helper API/CLI同样显式local gate、plain非RPC、caller commit，stdout仅安全ID/状态/计数/金额。根代理执行新原生反例、完整回归，spec→quality后提交。
 
 具体API `run_local_import(env, passwords_by_role, allow_local=False)`只运行已存在且验证通过的profile；缺静态标识时拒绝，不隐式调用其创建路径。CLI只读取既有600凭据，缺失不生成新密码文件。完成后复验可使用profile只读入口和动态标识事实，但不能再次调用submit/action/process/retry/向导create或映射write。
+
+Task2实际记录：13项CLI与24项原生先因缺少实现失败；实现后的46项profile+flow原生聚焦零失败/零错误，184.45秒、278499次查询。调用方非法语言必须在角色查询前丢弃，损坏数据反例确认实际持久值再验证；普通Integration/Operator/Settings/M1Sales的公开动作、原因向导、审计与只读复验均通过。完整595项post-tests零失败/零错误，2026-11-04 09:23:57 UTC，529.24秒、866257次查询（`.runtime/m3-local-flow-full-native.log`）；127项Python、27项Node、Ruff与独立规格/质量审查通过。开发库尚未执行，真实HTTP/浏览器在Task3。
 
 ### Task 3: 认证HTTP、浏览器与开发库验收
 

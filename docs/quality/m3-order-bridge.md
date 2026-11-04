@@ -135,3 +135,25 @@ Settings明确准备原生ir.cron，固定Job模型/代码、来源专用Operato
 纯22项及原生22项先实际RED；最终聚焦22项post-tests零失败/零错误，65.58秒、123970次查询（`.runtime/m3-local-profile-native-green-v3.log`）。完整**571项post-tests零失败/零错误**，2026-11-04 08:11:33 UTC，428.66秒、700804次查询（`.runtime/m3-local-profile-full-native.log`）。114项Python、27项Node、Ruff与独立规格/质量审查通过。
 
 全量纯测试发现临时目录已按项目规范指向runtime/tmp，已将越界路径反例改为独立且确定的目录，生产允许范围保持。开发库尚未安装/运行此profile；完整导入流程、真实角色HTTP/浏览器及最终CI仍待后续验证。
+
+## 界面与静态 profile 的实际 GitHub CI
+
+界面提交`5e304eabc53264041b810c39a0c420ba2cbbe605`的[PR](https://github.com/xdfu-nier/odoo-erp-portfolio/actions/runs/41792345076)与[push](https://github.com/xdfu-nier/odoo-erp-portfolio/actions/runs/41792337112)四个任务成功；实际制品下载`.runtime/m3-console-ci`，Linux549项post-tests零失败/零错误，2026-11-04 07:35:44 UTC，351.06秒、463048次查询。
+
+profile提交`934a752702480e86dd0431a696f26c20c4dd5cb5`的[PR](https://github.com/xdfu-nier/odoo-erp-portfolio/actions/runs/41799090046)与[push](https://github.com/xdfu-nier/odoo-erp-portfolio/actions/runs/41799081607)四个任务成功；制品`.runtime/m3-profile-ci`，Linux571项post-tests零失败/零错误，2026-11-04 08:30:32 UTC，296.34秒、552126次查询。
+
+两版本各21个白名单文件均已核对：原七角色HTTP/浏览器`ok=true`、七PNG签名有效、准备及履约各两次报告字节相同、库存10/净交付90/净过账7650对平。此CI原生测试证明profile准备器，完整M3导入角色本地HTTP/浏览器仍在后续阶段，不据既有M2七角色页面提前宣布通过。
+
+## 本地真实角色导入流程与只读复验
+
+2026-11-04，plain非RPC本地流程严格要求已存在的静态17标识和既有600凭据，不隐式建账号或生成新密码。动态namespace独立九个标识：两任务/两报价/四个尝试事件及一条精确repair映射。
+
+普通Integration真实公开提交/重复提交返回同任务；普通Operator公开动作处理第一单为done，创建人Operator、负责人既有M1Sales、原生draft且15%折扣确认由Sales收到准确审批业务拒绝。第二单保留原始顺序，缺失别名行失败且无报价，failed事件先留存；新Settings建立精确映射后Operator通过公开原因向导apply，再处理为done/尝试2，保留failed/retry/done历史。无确认、审批结论、库存/采购/财务写入。
+
+完成后重复仅只读复验九标识/原始载荷及摘要/原生报价数量价格折扣金额/创建与负责角色/尝试时间、原因和映射快照，不再调用任何提交、处理、重试、向导或映射写入。两次报告相同。静态profile只接受这套完整九标识内唯一同源/同公司/第二自有商品/实际Settings创建的repair映射，仍拒绝未标记、部分或其他额外映射，无递归profile→flow→profile。
+
+专用Operator如果还被用于任何其他来源，流程在固定批次之前拒绝，避免处理用户额外队列。已有source额外任务、商品销售/库存/采购/会计历史、缺失/重指/跨公司/原始审计或原生报价被改均拒绝，不修复覆盖。自己的保存点与独立锁395保证未知异常在第一张真实报价/第一次尝试后发生也不留下半个流程；静态17、M1全部19及finance/历史/当前轴承库存保持。
+
+先实际13项纯CLI和24项原生RED。修正入口先净化调用方非法语言再查角色，持久损坏反例以确定的测试SQL值核对后执行，不放宽业务模型。最终聚焦46项post-tests零失败/零错误，184.45秒、278499次查询（`.runtime/m3-local-flow-native-green-v2.log`）。完整**595项post-tests零失败/零错误**，2026-11-04 09:23:57 UTC，529.24秒、866257次查询（`.runtime/m3-local-flow-full-native.log`）。127项Python、27项Node、Ruff及独立规格/质量审查通过。
+
+开发库备份安装、实际三位新角色的HTTP/浏览器页面、对应新CI及最终M3交付尚未执行；这些结果不由原生测试提前代替。
