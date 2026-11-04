@@ -6,4 +6,5 @@ from . import (
     test_import_ui,
     test_import_worker,
     test_import_worker_concurrency,
+    test_local_acceptance,
 )
