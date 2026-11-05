@@ -12,9 +12,9 @@
 
 ### Task 1: 私有运行边界和一致备份
 
-**Files:** 新建`scripts/release_runtime.py`、`scripts/backup_local.py`、`tests/test_release_runtime.py`、`tests/test_backup_local.py`。
+**Files:** 新建`scripts/release_runtime.py`（纯边界/manifest）、`scripts/release_snapshot.py`（延迟导入的只读数据库采集）、`scripts/backup_local.py`、`tests/test_release_runtime.py`、`tests/test_backup_local.py`。`release_runtime.source_snapshot`保留稳定入口，调用时再导入snapshot模块，避免纯测试与无效输入触发原生依赖。
 
-- [ ] **Step 1: 纯契约测试ONLY与根代理RED**
+- [x] **Step 1: 纯契约测试ONLY与根代理RED**
 
 约定`release_runtime`提供`load_local_config(config_path)`、`runtime_path(path, existing=False)`、`source_snapshot(config)`、`read_manifest(backup_dir)`及安全`ReleaseError(code)`；CLI入口为`backup_local.main(argv=None)`，参数`--config --database --output-dir --allow-local-release`。只有源`odoo_portfolio`、loopback、私有项目配置、全新备份目录可通过；无效输入必须在PG/Odoo导入、子进程或文件创建之前拒绝。测试使用合成配置/目录验证越界、符号/硬链接、输出覆盖、错误端口/库、secret不回显与manifest拒绝篡改。实际RED命令：
 
@@ -25,13 +25,17 @@ JSON固定schema_version=1、严格类型/重复键拒绝，manifest32MiB、报�
 .venv/bin/python -X pycache_prefix=.cache/pycache -m unittest discover -s tests -p 'test_backup_local.py' -v
 ```
 
-- [ ] **Step 2: 一致备份实现与冻结**
+- [x] **Step 2: 一致备份实现与冻结**
 
 按设计实现配置/路径、只读namespace/角色/政策/业务/附件快照，PG工具仅通过参数列表与私有环境调用。`backup_local`先验证8069停服和其他连接0，再快照→dump/filestore→hashmanifest→快照比较。报告固定schema/ok/database/versions/file counts/checksums/一致性布尔值，未恢复时不得给restore通过。失败仅固定代码、非0退出，不泄露原异常或删除新建资源。
 
-- [ ] **Step 3: 根代理验证、spec→quality后提交**
+源码溯源采用`source_provenance(project_root=ROOT)`：ERP Git提交、addons内容摘要、tarball的固定lock/stamp及实际`upstream_sha256`；不在没有`.git`的Odoo目录向上误读ERP提交。纯测试覆盖无Git目录的有效tarball、错误/缺失标记、内容/路径变化及仅缓存/时间变化。manifest绑定实际upstream摘要，兼容性不由ERP Git提交相等决定。
 
-根代理执行全部Python、Node和Ruff；审查源码范围、快照SQL与权限后提交。脚本存在不代表备份实际通过；真实停服和备份在Task 2工具具备后由根代理完成。
+快照纳入全部5个商品的原生模板父记录、按5个商品归集的move/move_line/quant（含无picking期初明细），并核对完整来源任务/尝试、客户或origin或商品关联的报价集合严格为2/4/2。用受控源表回调测试政策/单位、期初明细、预留/库位变更影响指纹，额外未标记单据即拒绝，实际SQL适配器同一路径喂入生产摘要。归档限制在gzip读取/物理GNU/PAX头部解析前执行，包含padding/尾部，测试以小额度证明不会先读取过大扩展元数据。
+
+- [x] **Step 3: 根代理验证、spec→quality后提交**
+
+根代理执行全部Python、Node和Ruff；审查源码范围、快照SQL与权限后提交。实际停服备份已于Task 1提交后执行并复验，随后恢复main开发服务；这不代表Task 2恢复或附件原生验证已通过，后续仍须独立验收。
 
 ### Task 2: 新库/文件恢复和原生只读验收
 

@@ -22,13 +22,13 @@
 
 归档配置`data_dir/filestore/odoo_portfolio`的全部普通文件，拒绝源树符号链接/特殊文件。manifest记录源Git提交及addons树、固定Odoo revision、Python/PostgreSQL和模块版本、备份时间、dump/归档SHA256、全部文件相对路径/长度/摘要和数据快照摘要。文件列表及数据快照是私有manifest，不上传公共制品。备份前后快照一致才完成。
 
-Git提交用于溯源；恢复兼容性比较addons树、固定上游revision及模块版本，后续仅工具/文档提交变化不会令同一业务源码备份失效。备份时要求所记录addons无未提交改动。
+Git提交用于ERP仓库溯源；官方Odoo下载器保存tarball源码及`.portfolio-revision`，该目录没有独立Git仓库。工具同时核对`odoo-source.lock`与标记的固定revision，并以路径/内容长度分帧计算实际`upstream_sha256`，记录当前源码而不假称Git检查证明官方内容未改。排除标记文件、Git元数据及生成的pycache/pyc，不排除业务源码，拒绝源树符号链接/特殊成员。恢复兼容性比较addons树、上游内容摘要/固定revision及模块版本，后续仅工具/文档提交变化不会令同一业务源码备份失效。备份时要求所记录addons无未提交改动。
 
 快照涵盖M1十九标识、M2十履约标识、M3静态17/动态9标识及其模型/ID；十个项目角色的组/公司/密码配置仅保留不可逆摘要；模块版本、A/B业务政策、原始审计摘要、两任务/两报价/四事件及金额；库存10、毛交付100、退10、净交付90、净过账7650；原生附件store引用、checksum及文件长度。任何不一致拒绝完成，不重建库存或修正业务。
 
 ## 3. 恢复与验证
 
-恢复器在创建库前验证manifest结构、所有归档哈希与路径。tar成员须属于唯一源filestore前缀，不接受绝对/点段/重复路径、链接或特殊成员；通过逐文件独占写入及流式校验恢复，不调用不受限extractall。单次本地归档限制100000成员及1GiB展开数据，超出范围明确拒绝。
+恢复器在创建库前验证manifest结构、所有归档哈希与路径。tar成员须属于唯一源filestore前缀，不接受绝对/点段/重复路径、链接或特殊成员；通过逐文件独占写入及流式校验恢复，不调用不受限extractall。单次本地归档限制100000个物理头部及1GiB全部解压tar流（含GNU/PAX元数据、padding和尾部）。在解压读取及扩展头部解析前检查剩余额度，不能只在普通成员yield后累加文件长度；普通PAX长路径仍支持。超出范围明确拒绝，精确用尽额度时最多一字节EOF探测，发现额外内容即失败。
 
 在独立`.runtime/restores/<target>/data/filestore/<target>`重建文件树，生成600的独立Odoo配置，addons固定到当前项目源码，HTTP及cron关闭。项目`createdb`仅建立新库；`pg_restore --exit-on-error --single-transaction --no-owner --no-acl`恢复。失败保留安全的阶段状态和新目标信息，不自动DROP或覆盖。
 
