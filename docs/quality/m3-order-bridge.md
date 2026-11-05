@@ -157,3 +157,37 @@ profile提交`934a752702480e86dd0431a696f26c20c4dd5cb5`的[PR](https://github.co
 先实际13项纯CLI和24项原生RED。修正入口先净化调用方非法语言再查角色，持久损坏反例以确定的测试SQL值核对后执行，不放宽业务模型。最终聚焦46项post-tests零失败/零错误，184.45秒、278499次查询（`.runtime/m3-local-flow-native-green-v2.log`）。完整**595项post-tests零失败/零错误**，2026-11-04 09:23:57 UTC，529.24秒、866257次查询（`.runtime/m3-local-flow-full-native.log`）。127项Python、27项Node、Ruff及独立规格/质量审查通过。
 
 开发库备份安装、实际三位新角色的HTTP/浏览器页面、对应新CI及最终M3交付尚未执行；这些结果不由原生测试提前代替。
+
+## 本地流程版本的实际 GitHub CI
+
+提交`25db52ffd8df308d4259aba3d2eaf5f5f71da3b4`的[push工作流](https://github.com/xdfu-nier/odoo-erp-portfolio/actions/runs/41808332124)与[PR工作流](https://github.com/xdfu-nier/odoo-erp-portfolio/actions/runs/41808339442)四个任务成功。根代理下载PR白名单制品到`.runtime/m3-local-flow-ci`并核对21个文件：Linux **595项post-tests、零失败/零错误**，2026-11-04 09:41:17 UTC结束，363.72秒、663035次查询。原M1准备及M2履约各两次报告字节相同，七角色HTTP/浏览器通过，七张PNG签名有效，库存10/净交付90/净过账7650对平。
+
+该版本CI覆盖新增导入流程的原生测试；当时CI开发库尚未安装Bridge，不能据原M2页面报告推断M3浏览器通过。
+
+## 开发库保护、安装和两单实际导入
+
+2026-11-04，根代理先只读记录开发库`odoo_portfolio`的M1十九标识、M2十履约标识、原七角色密码/组/公司/邮件配置的私有摘要、A/B政策及黄金业务值。核对原服务的项目命令后优雅停服，在8069无监听、数据库无其他连接时使用项目内PostgreSQL16工具创建custom dump与filestore归档。
+
+备份目录`.runtime/backups/m3-pre-bridge-20261104T100207Z-f6bf21c3`权限700；数据库文件5,190,910字节、filestore归档2,945,871字节/870文件，文件及manifest权限600、记录SHA256。备份前后基线一致，备份不上传公共仓库或CI制品。**该备份尚未做恢复演练**，manifest保留`restore_verified=false`，恢复验证仍属M4。
+
+开发库随后实际安装`portfolio_order_bridge 18.0.1.3.0`，既有trade保持`18.0.1.5.0`，使用feature工作树源码运行8069，避免尚不含Bridge的main源码加载已升级数据库。三位独立角色的静态profile准备两次、导入流程运行两次，各自报告字节相同。实际结果为两任务done、两张原生draft报价309/161.50元、四条不可变尝试历史；第二单缺失映射失败、Settings修复、Operator带原因重试成功，创建人与负责销售分别保持Operator/M1 Sales。
+
+安装后、流程后及下述HTTP核对后均比较原基线：十九标识、十履约标识、原七角色摘要和A/B政策不变；库存10、毛交付100、退回10、净交付90、净过账7650不变。私有证据位于主项目`.runtime/m3-development-before-upgrade.json`、`m3-development-after-install.json`、`m3-development-after-http.json`以及`m3-development-{profile,flow}-{first,second}.json`。
+
+## 真实RPC分发返回契约
+
+实际HTTP揭示普通Python权限mixin的`search/search_fetch`仅有`@api.model`时，Odoo元类未继承记录集返回元数据，直接Python调用正常但JSON-RPC将结果编码为字符串。提交`5bedbebd5246ac26ebd3f2fb2113b0288fb28dc9`为这两个方法显式声明原生`@api.returns("self")`及`@api.readonly`，权限检查与业务逻辑保持。
+
+新增五项原生`api.call_kw`测试覆盖六个导入模型的真实RPC正整数ID列表、空结果、直接ORM记录集、角色/公司/sudo/私有字段反例及无关原生模型。根代理先实际RED五项/50个子场景失败，再聚焦五项通过。完整**600项post-tests、零失败/零错误**，2026-11-04 11:28:03 UTC结束、605.92秒、887220次查询，`.runtime/m3-rpc-contract-full-native.log`；独立规格与质量审查通过。
+
+## 开发库五角色实际认证HTTP
+
+提交`ab00e450bdf40a62745dd3e60a52c9d01dc815ac`包含独立标准库HTTP核对器和契约测试；根代理实际RED后实现，最终35项聚焦/162项完整Python测试、27项既有Node及Ruff通过，独立规格/质量审查通过。真实运行安全报告为主项目`.runtime/m3-development-http.json`，`ok=true`，Settings/Operator/Integration/M1 Sales/B公司销售五个独立会话的全部固定检查通过（分别16/16/17/16/15项）。
+
+实际检查登录UID/单公司/真实组、原生菜单动作和视图、来源与映射、停用cron、两任务/四事件、报价商品/单位/折扣/税与金额；Integration同内容重放复用原任务/报价，Operator处理已完成队列返回0，Sales确认仍被审批业务规则拒绝。直接RPC的越权处理/重试、原始载荷与配置读取、不可变审计写入、id-only探测/导出/查询及公司上下文伪造均按预期拒绝；每组反例后同会话健康读取和独立观察者复核业务未变。网络故障、会话失效、HTML/未知异常不计为权限通过。
+
+真实Odoo导出禁用返回明确UserError，核对器只接受固定原生错误且同步验证System/ERP/Allow Export组均未授予；报价表单金额核对原生只读`tax_totals` widget，列表与模型继续验证`amount_total`。这些原生兼容修正未增加权限或修改业务模型。
+
+HTTP后profile及flow再次各运行两次，报告与HTTP前留存版本均字节相同；最终仍为两任务、两草稿报价、四事件、309/161.50元、原十九标识及库存10。**真实浏览器五角色、对应最终CI及M3合并尚待完成**；上述服务端通过不替代页面或人工UAT证据。
+
+随后根代理在同一开发库、当前feature服务复跑既有M2七角色HTTP及真实Chrome页面：两个报告均`ok=true`，七张固定PNG签名有效，并实际查看财务履约追踪截图中的100/10/90数量及7650净过账。证据为主项目`.runtime/m3-m2-http.json`和`.runtime/m3-m2-browser/`。新增两张导入报价未破坏旧流程页面；这仍不代替新增五角色页面验收。

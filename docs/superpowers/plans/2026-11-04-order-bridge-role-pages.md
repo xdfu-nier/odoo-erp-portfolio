@@ -14,13 +14,13 @@
 
 **Files:** 新建 `scripts/verify_order_bridge_roles.py`、`tests/test_order_bridge_http.py`；必要时增加小型无Odoo依赖的输入报告校验函数，不修改业务模型/核心helper。
 
-- [ ] **Step 1: 纯契约失败测试，根代理实际RED**
+- [x] **Step 1: 纯契约失败测试，根代理实际RED**
 
 输入验证覆盖三角色私有凭据、原七角色凭据（仅Sales和B公司other_sales会话）、M1验收报告、M3静态17/动态9报告与数据库一致、正确模型/唯一正整数ID、两报价draft/CNY金额309与161.5/owner和creator/四尝试ordinal及reason、无原始密码/hash/config输出。路径仅当前或主项目runtime、无符号链接、输入不能被输出覆盖；无效目标/报告在网络之前拒绝。
 
 模拟HTTP层区分真AccessError/UserError/ValidationError与传输失败、过期session、错误JSON、HTML/redirect、未知异常。只把预期服务端错误类型计为权限反例通过，不能把断网或任意VerificationError当成功。原始远程error.data.debug/description、cookies和认证响应不输出。
 
-- [ ] **Step 2: 固定真实角色检查**
+- [x] **Step 2: 固定真实角色检查**
 
 CLI参数：`--base-url --database --credentials --sales-credentials --acceptance-report --profile-report --flow-report --output`。标准Odoo`/web/session/authenticate`登录五位实际角色：新Settings/Operator/Integration、已有M1Sales、B公司other_sales。各会话独立CookieJar、禁proxy/redirect、有限响应大小/超时；目标只有http://127.0.0.1:port且无路径/参数/用户信息，dbname两库之一。
 
@@ -34,7 +34,7 @@ Integration读取自己任务原始报文仅在内存解析后重复submit同内
 
 输出schema/ok/database/每角色UID/公司/组布尔值、菜单/动作ID、允许的业务单据ID/状态/金额/数量/attempt摘要、反例布尔值，不含密码、cookie、原始payload/错误体。固定检查集合须完整，不能只验证已有的子集就给ok=true。caller命令错误写安全错误分类并非0退出。
 
-- [ ] **Step 3: 根代理纯验证与双重审查后提交**
+- [x] **Step 3: 根代理纯验证与双重审查后提交**
 
 先根代理实际RED再实现，纯契约/全部Python/Ruff通过、spec→quality后提交；此时脚本存在不代表真实HTTP已验收。后面开发库或CI实际运行后才更新通过记录，不预先虚构结果。
 
@@ -58,7 +58,7 @@ Settings实际打开来源及客户/商品映射页，核对A公司/来源代码
 
 ### Task 3: 开发库保护、真实验收和CI
 
-- [ ] **Step 1: 根代理停服备份与版本预检**
+- [ ] **Step 1: 根代理停服备份与版本预检**（停服备份、安装、profile/flow双次、五角色HTTP已完成；新旧浏览器待核对）
 
 只操作现有项目开发库odoo_portfolio；先只读记录M1十九标识、既有角色、A/B政策、M2十履约标识、库存10/净交付90/净过账7650。核对已知开发服务PID和项目命令后优雅停止。项目PG16 pg_dump与filestore归档写忽略runtime/backups唯一目录、目录700/文件600，记录hash/源码模块版本，无凭据进入日志或公共制品。源数据库不删除/不覆盖，M4完整恢复验证尚未做需如实记录。
 
