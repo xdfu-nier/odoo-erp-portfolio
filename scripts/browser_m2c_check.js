@@ -761,5 +761,5 @@ async function main(argv = process.argv.slice(2)) {
 }
 
 module.exports = {parseArgs, readInputs, validateRoleReport, classifyListRows, collectValidatedList, clickRecord, validateListEvidence, validateDomEvidence,
-  validateBrowserReport, sanitizeDiagnostics, chromeStartupDiagnostics, createChromeLaunch, main};
+  validateBrowserReport, sanitizeDiagnostics, chromeStartupDiagnostics, createChromeLaunch, Cdp, Page, resolveChrome, main};
 if (require.main === module) main().then(status => { process.exitCode = status; });
