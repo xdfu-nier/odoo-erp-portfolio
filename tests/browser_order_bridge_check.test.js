@@ -598,3 +598,43 @@ test('readonly audit list permits native search controls and rejects every edita
   assert.equal(await check({tag: 'TEXTAREA', disabled: true}), true);
   assert.equal(await check({tag: 'INPUT', hidden: true}), true);
 });
+
+function notebookDom({opacity = '1', selected = true, show = true, contentHidden = false, ancestorOpacity = '1'} = {}) {
+  const ancestor = {parentElement: null, opacity: ancestorOpacity, getClientRects: () => [{}]};
+  const pane = {parentElement: ancestor, opacity, getClientRects: () => contentHidden ? [] : [{}],
+    classList: {contains: name => ['active', 'fade', ...(show ? ['show'] : [])].includes(name)},
+    matches: selector => selector.includes('tab-pane')};
+  const link = {parentElement: ancestor, textContent: 'Order Lines', opacity: '1', getClientRects: () => [{}],
+    classList: {contains: name => selected && name === 'active'}, matches: () => false, querySelector: () => null};
+  const notebook = {parentElement: ancestor, opacity: '1', getClientRects: () => [{}],
+    querySelectorAll: selector => selector.includes('nav-link') ? [link] : [pane], querySelector: () => pane};
+  link.closest = selector => selector.includes('o_notebook') ? notebook : null;
+  const document = {querySelectorAll: selector => selector.includes('nav-link') ? [link] : selector.includes('tab-pane') ? [pane] : [notebook]};
+  return {document, getComputedStyle: node => ({visibility: 'visible', display: 'block', opacity: node.opacity || '1'})};
+}
+
+test('native notebook readiness waits through fade opacity before accepting selected content or capturing screenshots', async () => {
+  const a = api(); assert.equal(typeof a.waitForRenderedPane, 'function'); assert.equal(typeof a.captureSettledScreenshot, 'function');
+  let polls = 0, captures = 0;
+  const page = {wait: async expression => {
+    for (const opacity of ['0', '0.4', '1']) {
+      polls++; const ready = vm.runInNewContext(expression, notebookDom({opacity}));
+      if (ready) { assert.equal(opacity, '1', 'A partial native fade is not stable rendered evidence'); return ready; }
+    }
+    throw new Error('Native pane never settled');
+  }, evaluate: async () => true, call: async method => {
+    assert.equal(method, 'Page.captureScreenshot'); assert.equal(polls, 3); captures++;
+    return {data: 'SYNTHETIC-PNG'};
+  }};
+  await a.waitForRenderedPane(page, ['Order Lines']); assert.equal(polls, 3);
+  polls = 0; await a.captureSettledScreenshot(page); assert.equal(captures, 1);
+  for (const invalid of [{selected: false}, {show: false}, {contentHidden: true}, {ancestorOpacity: '0'}, {ancestorOpacity: '0.4'}]) {
+    let captured = false;
+    const bad = {wait: async expression => {
+      const ready = vm.runInNewContext(expression, notebookDom(invalid));
+      if (!ready) throw new Error('Rendered pane unavailable'); return ready;
+    }, evaluate: async () => true, call: async () => { captured = true; return {data: 'INVALID'}; }};
+    await assert.rejects(a.waitForRenderedPane(bad, ['Order Lines']));
+    await assert.rejects(a.captureSettledScreenshot(bad)); assert.equal(captured, false);
+  }
+});

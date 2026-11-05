@@ -411,7 +411,10 @@ function writeOutput(filename, data, inputs) {
   } finally { try { fs.closeSync(descriptor); } catch {} if (fs.existsSync(temporary)) fs.unlinkSync(temporary); }
 }
 
-const DOM = `const visible = el => !!el && el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden';
+const DOM = `const geometry = el => !!el && el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden' && getComputedStyle(el).display !== 'none';
+const opacity = el => {const value=getComputedStyle(el).opacity;return value===undefined||value===''?1:Number(value);};
+const visible = el => {if(!geometry(el))return false;for(let node=el;node;node=node.parentElement){if(opacity(node)<=0||getComputedStyle(node).visibility==='hidden')return false;}return true;};
+const settled = el => {if(!visible(el))return false;for(let node=el;node;node=node.parentElement){if(opacity(node)!==1)return false;}return true;};
 const text = el => { if (!el) return ''; const input = el.matches?.('input:not([type=checkbox]), textarea') ? el : el.querySelector?.('input:not([type=checkbox]),textarea');
   return (input ? input.value : el.textContent || '').trim(); };
 const field = (root, name) => [...(root?.querySelectorAll('.o_field_widget[name="' + name + '"]') || [])].find(visible);
@@ -451,7 +454,23 @@ async function login(page, role, options, inputs) {
 async function tab(page, labels) {
   await page.wait(inspect(`const tabs=[...document.querySelectorAll('.o_form_view .o_notebook .nav-link')].filter(visible);
     const chosen=tabs.find(el=>${JSON.stringify(labels)}.some(label=>text(el)===label)); if(!chosen) return false; chosen.click(); return true;`));
-  await page.wait(inspect(`return [...document.querySelectorAll('.o_form_view .o_notebook .nav-link')].some(el=>visible(el)&&el.classList.contains('active')&&${JSON.stringify(labels)}.includes(text(el)));`));
+  await waitForRenderedPane(page, labels);
+}
+async function waitForRenderedPane(page, labels) {
+  requireEvidence(labels === undefined || (Array.isArray(labels) && labels.length > 0 && labels.every(clean)));
+  return page.wait(inspect(`const books=[...document.querySelectorAll('.o_form_view .o_notebook')].filter(geometry);
+    const ready=book=>{const selected=[...book.querySelectorAll('.o_notebook_headers .nav-link')].filter(el=>visible(el)&&el.classList.contains('active'));
+      const pane=book.querySelector('.o_notebook_content > .tab-pane.active');
+      return selected.length===1 && settled(selected[0]) && settled(pane) && (!pane.classList.contains('fade')||pane.classList.contains('show'));};
+    const labels=${JSON.stringify(labels || null)};
+    if(labels) {const matching=books.filter(book=>[...book.querySelectorAll('.o_notebook_headers .nav-link')]
+      .some(el=>visible(el)&&el.classList.contains('active')&&labels.includes(text(el))));return matching.length===1&&ready(matching[0]);}
+    return books.every(ready);`));
+}
+async function captureSettledScreenshot(page) {
+  await waitForRenderedPane(page);
+  requireEvidence(await page.evaluate(inspect(`return visible(document.querySelector('.o_main_navbar')) && !document.querySelector('input[name=password],input[type=password]') && !document.querySelector('.o_error_dialog');`)));
+  return page.call('Page.captureScreenshot', {format: 'png', captureBeyondViewport: false});
 }
 async function collectVisibleMenus(page) {
   return page.evaluate(inspect(`return [...new Set([...document.querySelectorAll('[data-menu-xmlid]')].filter(visible).map(el=>el.dataset.menuXmlid)
@@ -509,7 +528,7 @@ async function metadata(page, expectedId) {
 async function capture(page, role, key, state, options, inputs) {
   requireEvidence(PAGES[role].includes(key));
   requireEvidence(await page.evaluate(inspect(`return visible(document.querySelector('.o_main_navbar')) && !document.querySelector('input[name=password],input[type=password]') && !document.querySelector('.o_error_dialog');`)));
-  const shot = await page.call('Page.captureScreenshot', {format: 'png', captureBeyondViewport: false});
+  const shot = await captureSettledScreenshot(page);
   requireEvidence(typeof shot.data === 'string' && shot.data.length > 0);
   writeOutput(path.join(options.outputDir, screenshotName(role, key)), Buffer.from(shot.data, 'base64'), inputs);
   state.pages[key].screenshot = screenshotName(role, key);
@@ -734,7 +753,7 @@ async function main(argv = process.argv.slice(2)) {
   }
 }
 module.exports = {parseArgs, readInputs, validateSourceReports, validateRoleReport, validateDomEvidence, validateBrowserReport,
-  classifyBusinessRows, clickVisibleRecord, collectVisibleMenus, collectImportHeaders, collectCronCode, auditListReadonly, withRolePage, inspectAndRedactAudit, safeFailure, main};
+  classifyBusinessRows, clickVisibleRecord, collectVisibleMenus, collectImportHeaders, collectCronCode, auditListReadonly, waitForRenderedPane, captureSettledScreenshot, withRolePage, inspectAndRedactAudit, safeFailure, main};
 if (require.main === module) main().then(status => { process.exitCode = status; }).catch(() => {
   process.stdout.write(JSON.stringify(safeFailure()) + '\n'); process.exitCode = 1;
 });
