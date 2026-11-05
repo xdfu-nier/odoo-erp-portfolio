@@ -10,11 +10,15 @@ M2b已合并：真实交付开票额度、实物退货来源、贷项双重额�
 
 M2c已通过[PR #12](https://github.com/xdfu-nier/odoo-erp-portfolio/pull/12)合并：只读履约追踪、本地CNY会计准备、真实角色业务链路及七角色HTTP/浏览器核对。模块1.5.0通过412项本地Odoo测试及最终CI，见[页面与开发库验收记录](docs/quality/m2c-role-pages.md)。开发库两次相同流程核对库存10、净交付90、实际商品分录净过账7650，原19个标识及40件期初盘点保留，B公司策略不变。
 
-M3正在[PR #13](https://github.com/xdfu-nier/odoo-erp-portfolio/pull/13)开发：独立插件提供来源/客户/SKU映射、认证接收、精确业务摘要、数据库幂等、原生草稿报价、失败审计、带原因重试、默认停用的处理计划及真实并发/进程退出恢复。当前本地600项Odoo测试通过，开发库两单导入及五角色HTTP通过；五角色浏览器与最终CI尚待验收，见[M3验证记录](docs/quality/m3-order-bridge.md)。完整人工UAT、备份恢复与性能尚未完成。
+M3正在[PR #13](https://github.com/xdfu-nier/odoo-erp-portfolio/pull/13)交付核对：独立插件提供来源/客户/SKU映射、认证接收、精确业务摘要、数据库幂等、原生草稿报价、失败审计、带原因重试、默认停用的处理计划及真实并发/进程退出恢复。当前本地600项Odoo测试通过，开发库两单导入、五角色HTTP及真实浏览器19页通过；最终CI与合并待完成，见[M3验证记录](docs/quality/m3-order-bridge.md)。完整人工UAT、备份恢复与性能尚未完成。
 
 实际财务角色页面：只读销售来源、实物交付与退货、已过账数量和原生单据关联。截图使用虚构验收数据。
 
 ![财务角色履约追踪：净交付90，净过账7650](docs/screenshots/finance-fulfillment-trace.png)
+
+外部订单的真实处理历史：缺失SKU映射失败，修复后带原因重试成功，原失败事件保留。截图只使用虚构验收数据。
+
+![外部订单失败、人工重试及成功历史](docs/screenshots/order-import-retry-history.png)
 
 开发按照“案例调研 → 需求评审 → Odoo差异分析 → 分里程碑实现 → 集成测试 → 业务验收 → 发布恢复验证”推进。文档入口见[需求与交付文档](docs/requirements.md)，具体完成条件见[里程碑与流程](docs/delivery/workflow.md)。
 
@@ -98,10 +102,10 @@ VS Code 打开本项目目录，选择 `.venv/bin/python` 后使用 `Odoo: sourc
 ```bash
 .venv/bin/python -X pycache_prefix=.cache/pycache -m unittest discover -s tests -v
 .venv/bin/python -X pycache_prefix=.cache/pycache -m compileall -q scripts addons tests
-node --test tests/browser_m2c_check.test.js
+node --test tests/browser_m2c_check.test.js tests/browser_order_bridge_check.test.js
 ```
 
-当前162个Python辅助测试覆盖项目内路径、私有凭据、配置与命令行、幂等准备、精确载荷解析、HTTP角色证据和输入覆盖保护；既有27个Node测试覆盖真实渲染证据、字段可见性、菜单切换、原生空状态、脱敏启动诊断、IPC清理及原子记录点击。已发布CI执行原生Odoo测试、两次M1准备、显式会计/发件配置、两次M2角色流程及七角色HTTP/浏览器核对，仅上传白名单报告和截图。M3新增HTTP和浏览器的CI结果单独记录，业务测试命令及确切提交结果见上述质量记录；自动化核对与人工UAT分别记录。
+当前162个Python辅助测试覆盖项目内路径、私有凭据、配置与命令行、幂等准备、精确载荷解析、HTTP角色证据和输入覆盖保护；55个Node测试覆盖原有七角色与新增五角色的完整渲染证据、字段可见性、原生控件、菜单/列表权限、脱敏截图、会话隔离、IPC清理及原子记录点击。已发布CI执行原生Odoo测试、两次M1准备、显式会计/发件配置、两次M2角色流程及七角色HTTP/浏览器核对，仅上传白名单报告和截图。M3新增HTTP和浏览器的CI结果单独记录，业务测试命令及确切提交结果见上述质量记录；自动化核对与人工UAT分别记录。
 
 ## 开发顺序
 
@@ -110,7 +114,7 @@ node --test tests/browser_m2c_check.test.js
 | M0 | 项目内开发环境可用 | 实际安装、启动、登录及模块安装记录 |
 | M1 | 主数据与报价审批 | 主数据、审批、角色及本地验收工具已实现，87个Odoo测试通过；完整人工验收未完成 |
 | M2 | 采购到退货的履约闭环 | PR #12已合并；412项测试、七角色HTTP/浏览器及最终CI通过 |
-| M3 | 外部订单接入 | 600项本地测试、开发库两单和五角色HTTP通过；新浏览器/最终CI及PR #13合并待完成 |
+| M3 | 外部订单接入 | 600项本地测试、开发库两单及五角色HTTP/19页浏览器通过；最终CI及PR #13合并待完成 |
 | M4 | 发布和恢复 | 新库安装、升级、备份恢复及性能记录 |
 
 真实案例来源与本项目规则在[调研记录](docs/discovery/case-research.md)中区分。14条需求对应[28个验收场景](docs/quality/acceptance.md)，已验证的自动化子集和未执行的人工验收分别记录。测试公司、客户及单据使用虚构数据。

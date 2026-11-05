@@ -1,6 +1,6 @@
 # 外部订单接入：本地开发与角色入口
 
-状态：Bridge `18.0.1.3.0`的原生模型/视图、开发库两单和五角色HTTP已验证，浏览器及最终CI待完成；确切证据见[M3验证记录](m3-order-bridge.md)。这是虚构业务数据的个人作品集，不连接真实客户系统。
+状态：Bridge `18.0.1.3.0`的原生模型/视图、开发库两单、五角色HTTP及真实浏览器19页已验证，最终CI与合并待完成；确切证据见[M3验证记录](m3-order-bridge.md)。这是虚构业务数据的个人作品集，不连接真实客户系统。
 
 ## 框架和自定义插件的关系
 
@@ -64,7 +64,25 @@ cmp .runtime/m3-import-first.json .runtime/m3-import-second.json
   --output .runtime/m3-http.json
 ```
 
-`--acceptance-report`使用README中本机第一次M1准备保存的安全十九标识报告；若此前保存到其他runtime文件，替换该路径。浏览器命令与通过证据待实现后补入，现阶段不以HTTP或契约单测代替浏览器通过。
+`--acceptance-report`使用README中本机第一次M1准备保存的安全十九标识报告；若此前保存到其他runtime文件，替换该路径。
+
+使用已有Node22及Chrome，五角色分别经原生登录页建立独立会话，并核对19个页面：
+
+```bash
+node scripts/browser_order_bridge_check.js \
+  --base-url http://127.0.0.1:8069 --database odoo_portfolio \
+  --credentials .runtime/order-bridge-accounts.json \
+  --sales-credentials .runtime/acceptance-accounts.json \
+  --acceptance-report .runtime/m1-acceptance.json \
+  --profile-report .runtime/m3-profile-second.json --flow-report .runtime/m3-import-second.json \
+  --role-report .runtime/m3-http.json --output-dir .runtime/m3-browser
+```
+
+浏览器读取已经完成的历史，不再提交、重试或创建第三单。`report.json`和19张固定PNG保存在输出目录；接收审计中的原始/规范报文及摘要先核对只读，再遮盖截图。实际验收角色没有启用原生折扣和单位显示组：报价页面核对可见商品、数量、单价、税、小计及总额，隐藏折扣列用可见金额关系计算并标明来源；真实折扣/单位同时由HTTP核对，不把隐藏列描述为浏览器可见。
+
+![原失败、带原因重试及成功的原生处理历史](../screenshots/order-import-retry-history.png)
+
+![Sales原生草稿报价161.50元及审批入口](../screenshots/order-import-draft-quotation.png)
 
 ## 可选自动处理
 

@@ -42,23 +42,25 @@ Integration读取自己任务原始报文仅在内存解析后重复submit同内
 
 **Files:** 新建 `scripts/browser_order_bridge_check.js`、`tests/browser_order_bridge_check.test.js`，最小复用既有Chrome启动/短IPC工具。避免为新流程大幅重构已有M2验收行为。
 
-- [ ] **Step 1: Node契约测试与截图实现**
+- [x] **Step 1: Node契约测试与截图实现**
 
 输入继承HTTP输入的本地目标和安全报告，并验证HTTP报告五角色全部通过/ID对应、输出目录在runtime。所有角色各自独立浏览器context或profile，凭据只用于登录不写报告；等待页面用可验证DOM条件和时间上限，不能只sleep后截图。
 
 Settings实际打开来源及客户/商品映射页，核对A公司/来源代码/负责人与专用Operator、三条映射及对应商品、专用计划默认停用。Operator/Integration实际打开两任务表单、raw只读辅助页及四尝试/原因历史，核对done、次数1/2、来源公司、creator/处理人和外部单号。Operator及Sales打开两张原生报价，核对draft、309/161.5 CNY、Sales owner、商品数量/折扣/税和需审批状态；已完成任务不显示重试操作。Settings/Sales/B用户没有不应展示的导入载荷入口。
 
+2026-11-05原生功能组预检补充：实际Operator/Sales均无`uom.group_uom`及`sale.group_discount_per_so_line`，单公司字段也受原生显示规则限制。公司以明确标注来源的可见navbar证明；审批以可见Sales Approval页签、draft状态及申请按钮配合实际HTTP审批检查证明，不虚构隐藏字段。可选择启用原生显示组、另加定价视图或核对现有可见行的金额关系；本步采用第三种，保留原角色与界面配置。页面必须显示商品、数量、单价、税及小计；折扣列未显示时，以这三个可见数值计算0/15%折扣并记录`origin=visible_quantity_price_subtotal`，同时要求HTTP真实行折扣/单位检查通过。若列已显示则直接验证；单位列未显示也明确记录为原生功能未启用，不声称浏览器显示了单位。小计分别为105/204与102/59.50，错误或不可见数值不能作为通过证据。Settings还核对实际Integration标签，菜单证明覆盖全部导入/业务根与叶节点，Integration的列表表头处理按钮和表单按钮分别核对。
+
 这一步读取已经完成的流程历史，不额外创建第三单或改动严格九标识验收集合。真实原因向导创建/apply已由原生Form验证；浏览器证据精确描述可见结果和历史，不将只读页面称为再次执行了重试。
 
 表格只匹配可见的准确业务行，不把Odoo sample占位行当记录。atomic可见行查找/点击，不能分步选错行。安全报告必须验证完整角色/页面集合和实际DOM证据再ok=true；截图文件名为固定白名单，失败只输出分类/计数，不输出页面正文、输入框、session或Chrome原始stderr。
 
-- [ ] **Step 2: 根代理测试/静态审查后提交**
+- [x] **Step 2: 根代理测试/静态审查后提交**
 
 根代理先Node实际RED、实现后新旧Node/全部Python/Ruff通过；spec→quality后提交。实际运行由根代理在下面环境准备后执行，CI也必须执行并保留安全PNG/report，不以契约单测替代浏览器通过。
 
 ### Task 3: 开发库保护、真实验收和CI
 
-- [ ] **Step 1: 根代理停服备份与版本预检**（停服备份、安装、profile/flow双次、五角色HTTP已完成；新旧浏览器待核对）
+- [x] **Step 1: 根代理停服备份与版本预检**（备份尚未恢复，M4另行验证）
 
 只操作现有项目开发库odoo_portfolio；先只读记录M1十九标识、既有角色、A/B政策、M2十履约标识、库存10/净交付90/净过账7650。核对已知开发服务PID和项目命令后优雅停止。项目PG16 pg_dump与filestore归档写忽略runtime/backups唯一目录、目录700/文件600，记录hash/源码模块版本，无凭据进入日志或公共制品。源数据库不删除/不覆盖，M4完整恢复验证尚未做需如实记录。
 
