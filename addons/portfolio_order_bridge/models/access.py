@@ -81,11 +81,28 @@ class ImportAccess:
     def _import_check_query_fields(self, domain=None, field_specs=(), order=None):
         # Native SQL field checks miss optimized M2M predicates and ignore some
         # read_group field specs. Check caller field names before native evaluation.
-        names = {
-            term[0].split(".", 1)[0]
-            for term in expression.normalize_domain(domain or [])
-            if expression.is_leaf(term) and isinstance(term[0], str)
-        }
+        def check_domain(model, terms):
+            for term in terms:
+                if not expression.is_leaf(term) or not isinstance(term[0], str):
+                    continue
+                related = model
+                for name in term[0].split("."):
+                    field = related._fields.get(name)
+                    if not field:
+                        related = None
+                        break  # Leave invalid paths to native domain validation.
+                    related.check_field_access_rights("read", [name])
+                    if not field.relational:
+                        related = None
+                        break  # Native property paths are not model relations.
+                    related = related.env[field.comodel_name]
+                # Native dotted paths become `any` domains whose private _search
+                # bypasses this public guard. Inspect both forms before rewriting.
+                if related is not None and term[1] in {"any", "not any"}:
+                    check_domain(related, term[2])
+
+        check_domain(self, expression.normalize_domain(domain or []))
+        names = set()
         for spec in field_specs:
             match = regex_field_agg.match(spec)
             if match:
