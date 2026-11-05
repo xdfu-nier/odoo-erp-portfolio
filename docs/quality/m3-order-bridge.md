@@ -1,6 +1,6 @@
 # M3 外部订单接入验证记录
 
-状态：开发中。需求 REQ-009—012，验收 UAT-014—019、023—024；M3 未完成。
+状态：已完成，通过PR #13于2026-11-05合并，Issue #6已结项。需求REQ-009—012，验收UAT-014—019、023—024的自动化证据齐全；完整人工UAT单独记录。以下按阶段保留历史状态，最终交付见文末。
 
 ## M3a 精确载荷与业务摘要
 
@@ -221,3 +221,11 @@ HTTP后profile及flow再次各运行两次，报告与HTTP前留存版本均字�
 修正`ee024c0e5f024bc89b078138918257606b12f1a1`在原生改写前按实际调用者逐段核对关联字段读权限，并递归检查`any/not any`域，不禁用合法关联查询。新增13项原生测试覆盖六种公开查询的ORM/RPC、点路径/嵌套域、保留sudo/伪造context/空结果反例及Operator、Settings、Integration的合法查询和返回契约。实际RED为13项/166个失败子场景、零错误；聚焦修复后13项通过，7.84秒、10481次查询。
 
 完整**613项post-tests、零失败/零错误**，2026-11-05 03:21:10 UTC结束，628.54秒、911465次查询（`.runtime/m3-related-query-full-native.log`）；162项Python、57项Node、Ruff、独立规格/质量及原最终审查的闭环复查通过。重启feature开发服务后，同一真实HTTP六条复现全部为AccessError，完整五角色HTTP与19页浏览器再次通过，仍为两任务/两草稿报价/四事件/309及161.50元。该源码版本的最终GitHub CI及合并仍待核对。
+
+## 最终CI、合并及main复验
+
+精确head`9cdefe8182a4a47852beee983821dc25258fc844`的[push工作流](https://github.com/xdfu-nier/odoo-erp-portfolio/actions/runs/41968381467)及[PR工作流](https://github.com/xdfu-nier/odoo-erp-portfolio/actions/runs/41968386480)共四任务全部成功。根代理下载PR制品到`.runtime/m3-final-ci`，逐项核对47个白名单文件及26张PNG：Linux **613项post-tests、零失败/零错误**，2026-11-05 04:40:50 UTC，355.15秒、679529次查询；四组准备/履约/导入报告各两次字节相同，原七角色和新增五角色的HTTP/浏览器四报告均`ok=true`。实际查看CI报价及报文遮盖截图，新增19页完整，库存10/净交付90/净过账7650对平。
+
+[PR #13](https://github.com/xdfu-nier/odoo-erp-portfolio/pull/13)于2026-11-05 05:14:32 UTC合并到main，合并提交`9bd5684214bf28720474a6fb82300aa8a4c96541`。根代理导入并校验精确签名合并对象、快进主工作区，验证main与已验收head的文件树同为`159fec6e5b6724566a6461bfd536a8b2b96adce1`。停止feature服务后从main启动8069，实际五角色HTTP再次通过；main流程入口只读复验已完成两单，解析后的报告全部值与先前相同（CLI输出空白格式不同，不声称原始字节相同）。
+
+Issue #6已关闭并附[交付证据](https://github.com/xdfu-nier/odoo-erp-portfolio/issues/6#issuecomment-6650784447)。正式个人项目简历MD/DOCX/HTML/PDF同步实际模块、幂等/并发/恢复难点和613/162/57验证结果；PDF仍三页，不写成雇主或真实客户上线。保留工作树与私有验收文件。M4当前数据独立库恢复/性能另行执行，原升级前备份仍不能标为已恢复；完整人工UAT及原有可选环境工具缺项继续单独记录。
