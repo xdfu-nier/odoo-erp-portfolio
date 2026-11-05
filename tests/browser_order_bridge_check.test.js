@@ -638,3 +638,95 @@ test('native notebook readiness waits through fade opacity before accepting sele
     await assert.rejects(a.captureSettledScreenshot(bad)); assert.equal(captured, false);
   }
 });
+
+function quotationDom(stage) {
+  const make = (value = '', classes = [], parent = null) => ({textContent: value, parentElement: parent,
+    getClientRects: () => [{}], matches: () => false, classList: {contains: name => classes.includes(name)},
+    querySelector: () => null, querySelectorAll: () => [], closest: () => null});
+  const pane = make('', ['tab-pane', 'active', 'fade', 'show']);
+  const tab = make('Order Lines', ['nav-link', 'active']);
+  const book = make(); book.querySelectorAll = selector => selector.includes('nav-link') ? [tab] : [pane];
+  book.querySelector = () => pane; tab.closest = () => book;
+  const fields = {name: make('S00002'), partner_id: make('Portfolio bridge acceptance customer'), state: make('Quotation')};
+  const total = make('¥ 309.00');
+  fields.tax_totals = make('', ['o_readonly_modifier', 'o_field_account-tax-totals-field'], pane);
+  fields.tax_totals.querySelector = selector => selector === 'span[name=amount_total]' ? total : null;
+  total.parentElement = fields.tax_totals;
+  const rows = [[2, 3, 35, 105], [1, 2, 120, 204]].map(([product, quantity, price, subtotal]) => {
+    const row = make('', [], pane);
+    const cells = {product_template_id: make(`[BRIDGE-ACCEPTANCE-${product}] Portfolio bridge acceptance item ${product}`, [], row),
+      product_uom_qty: make(String(quantity), [], row), price_unit: make(String(price), [], row),
+      price_subtotal: make(String(subtotal), [], row), tax_id: make('', [], row)};
+    row.querySelector = selector => cells[selector.match(/name="([^"]+)"/)?.[1]] || null;
+    return row;
+  });
+  fields.order_line = make('', [], pane);
+  fields.order_line.querySelectorAll = () => stage.rows === 2 ? rows : [];
+  const submit = make(), company = make('PARTS-A'), form = make();
+  form.querySelectorAll = selector => selector.includes('button[name=action_portfolio_submit]') ? [submit] :
+    fields[selector.match(/name="([^"]+)"/)?.[1]] ? [fields[selector.match(/name="([^"]+)"/)[1]]] : [];
+  const document = {querySelector: selector => selector === '.o_form_view' ? form :
+    selector === '.o_switch_company_menu .oe_topbar_name' ? company : null,
+    querySelectorAll: selector => selector.includes('o_notebook') ? [book] : []};
+  return {document, getComputedStyle: node => ({visibility: 'visible', display: 'block', opacity: node === pane ? stage.opacity : '1'})};
+}
+
+test('real quotation snapshot waits for initial Order Lines rendering and both business rows before collecting evidence', async () => {
+  const a = api(); assert.equal(typeof a.collectQuoteSnapshot, 'function');
+  const transitions = [{opacity: '0', rows: 0}, {opacity: '0.4', rows: 0}, {opacity: '1', rows: 0}, {opacity: '1', rows: 2}];
+  let index = 0, readinessPolls = 0;
+  const context = () => quotationDom(transitions[index]);
+  const page = {wait: async expression => {
+    for (; index < transitions.length; index++) {
+      readinessPolls++; const result = vm.runInNewContext(expression, context());
+      if (result) {
+        assert.equal(transitions[index].opacity, '1', 'A partially rendered pane cannot satisfy quotation evidence');
+        return result;
+      }
+    }
+    throw new Error('Quotation readiness deadline reached');
+  }, evaluate: async expression => {
+    assert.equal(transitions[index].opacity, '1', 'Snapshot was collected during the initial native fade');
+    const snapshot = vm.runInNewContext(expression, context());
+    if (snapshot?.lines) assert.equal(transitions[index].rows, 2, 'An incomplete native list cannot become a saved snapshot');
+    return snapshot;
+  }};
+  const result = await a.collectQuoteSnapshot(page, 'S00002');
+  assert.ok(readinessPolls >= 4); assert.equal(result.lines.length, 2);
+  assert.equal(result.fields.name.value, 'S00002'); assert.equal(result.fields.tax_totals.value, '¥ 309.00');
+  assert.deepEqual(Array.from(result.lines, line => Number(line.subtotal)), [105, 204]);
+  let acceptedIncomplete = false;
+  const incomplete = {wait: async expression => {
+    const result = vm.runInNewContext(expression, quotationDom({opacity: '1', rows: 0}));
+    if (!result) throw new Error('Quotation readiness deadline reached'); return result;
+  }, evaluate: async expression => {
+    acceptedIncomplete = true; return vm.runInNewContext(expression, quotationDom({opacity: '1', rows: 0}));
+  }};
+  await assert.rejects(a.collectQuoteSnapshot(incomplete, 'S00002'));
+  assert.equal(acceptedIncomplete, false, 'An empty rendered list must fail its bounded readiness check');
+});
+
+test('role validation failures identify only a closed page and predicate code and never export evidence or exceptions', () => {
+  const a = api(), inputs = fixture(), state = dom('operator', inputs);
+  state.pages.quote_success.lines = [];
+  let failure;
+  try { a.validateDomEvidence('operator', state, inputs); } catch (error) { failure = error; }
+  assert.ok(failure);
+  const report = a.safeFailure({role: 'operator', stage: 'role_validation'}, failure);
+  assert.equal(report.stage, 'role_validation'); assert.equal(report.failed_page, 'quote_success'); assert.equal(report.failed_check, 'QUOTE_LINE_COUNT');
+  assert.deepEqual(Object.keys(report).sort(), ['schema_version', 'ok', 'role', 'stage', 'reason', 'failed_page', 'failed_check'].sort());
+  for (const hostile of [new Error('PRIVATE-PASSWORD RESPONSE SESSION STACK'),
+    {failed_page: 'quote_success', failed_check: 'PRIVATE-RAW-DOM', message: 'PRIVATE-PASSWORD'},
+    {failed_page: '../PRIVATE-PASSWORD.json', failed_check: 'QUOTE_LINE_COUNT', stack: 'PRIVATE-STACK'},
+    {failed_page: 'quote_success', failed_check: 'QUOTE_LINE_COUNT', raw: 'PRIVATE-PAYLOAD'}]) {
+    const safe = a.safeFailure({role: 'operator', stage: 'role_validation', page: 'PRIVATE-ARG'}, hostile);
+    assert.ok(!JSON.stringify(safe).includes('PRIVATE'));
+    if (safe.failed_page !== undefined) assert.ok(PAGE_KEYS.operator.includes(safe.failed_page));
+    if (safe.failed_check !== undefined) assert.match(safe.failed_check, /^[A-Z_]+$/);
+    assert.ok(!Object.hasOwn(safe, 'raw')); assert.ok(!Object.hasOwn(safe, 'stack')); assert.ok(!Object.hasOwn(safe, 'message'));
+  }
+  const wrong = dom('operator', inputs); wrong.pages.quote_repaired.lines[0].visibility.subtotal = false;
+  let visibilityFailure; try { a.validateDomEvidence('operator', wrong, inputs); } catch (error) { visibilityFailure = error; }
+  const visibility = a.safeFailure({role: 'operator', stage: 'role_validation'}, visibilityFailure);
+  assert.equal(visibility.failed_page, 'quote_repaired'); assert.equal(visibility.failed_check, 'QUOTE_LINE_VISIBILITY');
+});

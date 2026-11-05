@@ -290,104 +290,164 @@ function validateEvents(rows, expected, withJob = false) {
       row.retry_reason === (kind === 'retry' ? REASON : '') && (!withJob || row.job === external(suffix)));
   }
 }
+const FAILURE_CHECKS = new Set([
+  'ROLE_IDENTITY', 'RENDERED_LOGIN', 'ROLE_MENUS', 'ROLE_CONFIG_HEADERS',
+  'REQUIRED_PAGES', 'PAGE_IDENTITY', 'SOURCE_FIELDS', 'SOURCE_INTEGRATION',
+  'SOURCE_CRON_LINK', 'CUSTOMER_MAPPINGS', 'PRODUCT_MAPPINGS', 'CRON_CONFIGURATION',
+  'JOB_LIST_CONTROLS', 'JOB_FORM_CONTROLS', 'JOB_FIELDS', 'JOB_ATTEMPTS',
+  'JOB_QUOTE_LINK', 'JOB_CREATOR', 'JOB_HISTORY', 'AUDIT_READONLY',
+  'AUDIT_HELPERS', 'ATTEMPT_CONTROLS', 'ATTEMPT_HISTORY', 'QUOTE_CREATOR',
+  'QUOTE_FIELDS', 'QUOTE_TOTAL', 'QUOTE_COMPANY', 'QUOTE_APPROVAL',
+  'QUOTE_LINE_COUNT', 'QUOTE_LINE_IDENTITY', 'QUOTE_LINE_VISIBILITY', 'QUOTE_LINE_VALUES',
+  'QUOTE_SUBTOTAL', 'QUOTE_DISCOUNT', 'QUOTE_UNIT', 'OTHER_COMPANY_EMPTY',
+  'SAMPLE_PLACEHOLDERS']);
+const FAILURE_PAGES = new Set(['role', ...Object.values(PAGES).flat()]);
+class EvidenceFailure extends Error {
+  constructor(page, check) {
+    super('INVALID_EVIDENCE');
+    this.failed_page = FAILURE_PAGES.has(page) ? page : 'role';
+    this.failed_check = FAILURE_CHECKS.has(check) ? check : 'ROLE_IDENTITY';
+  }
+}
 function validateDomEvidence(role, evidence, inputs) {
-  requireEvidence(ROLES.includes(role) && evidence.role === role);
-  const login = evidence.login;
-  requireEvidence(login?.rendered_form === true && login.submitted === true && login.authenticated === true && login.password_field_count === 0 &&
-    login.user_label === (ROLES.indexOf(role) < 3 ? `Portfolio bridge acceptance ${role}` : `Acceptance ${role}`));
-  requireEvidence(Array.isArray(evidence.menu_xmlids) && equal([...evidence.menu_xmlids].sort(), expectedMenus(role).sort()) && evidence.import_payload_entry_count === 0 && evidence.import_root_visible === (ROLES.indexOf(role) < 3));
-  const configHeader = {visible: true, label: 'Import settings / 导入配置', root_xmlid: ROOT_MENUS.import,
-    root_open: true, header_has_xmlid: false, child_xmlids: ['sources', 'customer_maps', 'product_maps'].map(menuXmlid)};
-  requireEvidence(equal(evidence.config_headers, role === 'settings' ? [configHeader] : []));
-  keys(evidence.pages, PAGES[role]);
-  const safePages = {};
-  for (const [key, page] of Object.entries(evidence.pages)) {
-    const model = key === 'source' ? SOURCE : key === 'cron' ? 'ir.cron' : key === 'attempts' ? EVENT :
-      key.startsWith('job_') || key.startsWith('audit_') ? JOB : MODELS[key] || 'sale.order';
-    requireEvidence(page?.visible === true && page.model === model && page.screenshot === screenshotName(role, key));
-    safePages[key] = {model, visible: true, screenshot: screenshotName(role, key)};
-  }
-  if (role === 'settings') {
-    const {source, customer_maps: customer, product_maps: product, cron} = evidence.pages;
-    for (const [name, value] of Object.entries({name: LABEL.source, company_id: LABEL.company, company_code: 'PARTS-A', code: 'B2B-ACCEPTANCE',
-      sales_user_id: LABEL.sales, processor_user_id: LABEL.operator})) visibleField(source, name, value);
-    visibleField(source, 'integration_user_ids', [LABEL.integration]);
-    requireEvidence(visibleField(source, 'processing_cron_id', `Order import / 订单导入: ${LABEL.source}`).linked === true);
-    requireEvidence(equal(customer.columns.sort(), ['source_id', 'company_id', 'external_ref', 'partner_id', 'active'].sort()) &&
-      customer.rows.length === 1 && equal(customer.rows[0], {visible: true, source_id: LABEL.source, company_id: LABEL.company,
-        external_ref: 'BRIDGE-ACCEPTANCE-CUSTOMER', partner_id: LABEL.customer, active: true}));
-    requireEvidence(equal(product.columns.sort(), ['source_id', 'company_id', 'external_sku', 'product_id', 'active'].sort()) && product.rows.length === 3);
-    for (const sku of ['1', '2', 'REPAIR']) requireEvidence(product.rows.filter(row => equal({...row, product_id: undefined}, {visible: true, source_id: LABEL.source,
-      company_id: LABEL.company, external_sku: `BRIDGE-ACCEPTANCE-${sku}`, product_id: undefined, active: true}) && productDisplay(row.product_id, sku === '1' ? 1 : 2)).length === 1);
-    requireEvidence(cron.opened_by_link === true);
-    for (const [name, value] of Object.entries({name: `Order import / 订单导入: ${LABEL.source}`, active: false, user_id: LABEL.operator, code: 'model._process_pending()'})) visibleField(cron, name, value);
-  }
-  if (['operator', 'integration'].includes(role)) {
-    requireEvidence(equal(evidence.job_list_buttons, role === 'operator' ? ['action_process_pending'] : []));
-    for (const suffix of ['success', 'repaired']) {
-      const job = evidence.pages[`job_${suffix}`];
-      requireEvidence(job.readonly === true && equal(job.write_controls, []) && equal(job.visible_buttons, role === 'operator' ? ['action_open_sale_order'] : []) && job.opened_from_visible_row === true);
-      for (const [name, value] of Object.entries({external_order_id: external(suffix), source_id: LABEL.source, company_id: LABEL.company,
-        state: 'done', submitted_by_id: LABEL.integration})) visibleField(job, name, value);
-      requireEvidence(numeric(visibleField(job, 'attempt_count').value) === inputs.flow.jobs[suffix].attempt_count);
-      const quote = visibleField(job, 'sale_order_id', inputs.flow.quotes[suffix].name); requireEvidence(quote.readonly === true && quote.no_open === true);
-      requireEvidence(job.metadata?.visible === true && job.metadata.creator === LABEL.integration);
-      validateEvents(job.history, EVENTS.filter(([, eventSuffix]) => suffix === eventSuffix));
-      const audit = evidence.pages[`audit_${suffix}`]; requireEvidence(audit.readonly === true);
-      for (const name of ['raw_payload', 'canonical_payload', 'payload_hash']) {
-        const field = visibleField(audit, name); requireEvidence(field.readonly === true && field.nonempty === true && field.value === null);
-      }
-      Object.assign(safePages[`job_${suffix}`], {external_order_id: external(suffix), state: 'done', attempt_count: inputs.flow.jobs[suffix].attempt_count,
-        creator: LABEL.integration, processor: LABEL.operator, history_events: job.history.length});
+  let failedPage = 'role', failedCheck = 'ROLE_IDENTITY';
+  try {
+    requireEvidence(ROLES.includes(role) && evidence.role === role);
+    failedCheck = 'RENDERED_LOGIN';
+    const login = evidence.login;
+    requireEvidence(login?.rendered_form === true && login.submitted === true && login.authenticated === true && login.password_field_count === 0 &&
+      login.user_label === (ROLES.indexOf(role) < 3 ? `Portfolio bridge acceptance ${role}` : `Acceptance ${role}`));
+    failedCheck = 'ROLE_MENUS';
+    requireEvidence(Array.isArray(evidence.menu_xmlids) && equal([...evidence.menu_xmlids].sort(), expectedMenus(role).sort()) && evidence.import_payload_entry_count === 0 && evidence.import_root_visible === (ROLES.indexOf(role) < 3));
+    failedCheck = 'ROLE_CONFIG_HEADERS';
+    const configHeader = {visible: true, label: 'Import settings / 导入配置', root_xmlid: ROOT_MENUS.import,
+      root_open: true, header_has_xmlid: false, child_xmlids: ['sources', 'customer_maps', 'product_maps'].map(menuXmlid)};
+    requireEvidence(equal(evidence.config_headers, role === 'settings' ? [configHeader] : []));
+    failedCheck = 'REQUIRED_PAGES';
+    keys(evidence.pages, PAGES[role]);
+    const safePages = {};
+    for (const [key, page] of Object.entries(evidence.pages)) {
+      failedPage = key; failedCheck = 'PAGE_IDENTITY';
+      const model = key === 'source' ? SOURCE : key === 'cron' ? 'ir.cron' : key === 'attempts' ? EVENT :
+        key.startsWith('job_') || key.startsWith('audit_') ? JOB : MODELS[key] || 'sale.order';
+      requireEvidence(page?.visible === true && page.model === model && page.screenshot === screenshotName(role, key));
+      safePages[key] = {model, visible: true, screenshot: screenshotName(role, key)};
     }
-    requireEvidence(evidence.pages.attempts.readonly === true && equal(evidence.pages.attempts.write_controls, []));
-    validateEvents(evidence.pages.attempts.rows, EVENTS, true);
-    safePages.attempts.event_count = 4;
-  }
-  if (['operator', 'sales'].includes(role)) for (const suffix of ['success', 'repaired']) {
-    const quote = evidence.pages[`quote_${suffix}`], expected = inputs.flow.quotes[suffix];
-    requireEvidence(quote.opened_from_visible_row === true && quote.metadata?.visible === true && quote.metadata.creator === LABEL.operator);
-    for (const [name, value] of Object.entries({name: expected.name, partner_id: LABEL.customer, user_id: LABEL.sales,
-      state: 'draft', origin: `B2B-ACCEPTANCE:${external(suffix)}`, client_order_ref: `B2B-ACCEPTANCE:${external(suffix)}`, portfolio_approval_state: 'draft'})) visibleField(quote, name, value);
-    const totals = visibleField(quote, 'tax_totals'); requireEvidence(totals.readonly === true && totals.widget === 'account-tax-totals-field' && numeric(totals.value) === expected.amount_total);
-    requireEvidence(equal(quote.company_scope, {visible: true, label: LABEL.company, origin: 'navbar'}));
-    requireEvidence(quote.approval_required?.visible === true && quote.approval_required.value === true &&
-      quote.approval_required.submit_button_visible === true && quote.approval_required.approval_tab_visible === true);
-    const wanted = suffix === 'success' ? [[2, 3, 35, 0], [1, 2, 120, 15]] : [[1, 1, 120, 15], [2, 2, 35, 15]];
-    requireEvidence(Array.isArray(quote.lines) && quote.lines.length === 2);
-    for (const [product, quantity, price, discount] of wanted) {
-      const matching = quote.lines.filter(line => productDisplay(line.product, product)); requireEvidence(matching.length === 1); const line = matching[0];
-      requireEvidence(line.visible === true && line.product_visible === true &&
-        ['quantity', 'price_unit', 'subtotal', 'tax'].every(name => line.visibility?.[name] === true) &&
-        numeric(line.quantity) === quantity && numeric(line.price_unit) === price && line.tax === '');
-      const subtotal = quantity * price * (1 - discount / 100);
-      requireEvidence(Math.abs(numeric(line.subtotal) - subtotal) < 0.000001);
-      if (line.visibility.discount === true) {
-        requireEvidence(numeric(line.discount) === discount && equal(line.discount_evidence, {visible: true, origin: 'native_column', native_column_absent: false}));
-      } else {
-        requireEvidence(line.visibility.discount === false && line.discount === '' && equal(line.discount_evidence,
-          {visible: false, origin: 'visible_quantity_price_subtotal', derived_percent: discount, native_column_absent: true}) &&
-          Math.abs((1 - numeric(line.subtotal) / (numeric(line.quantity) * numeric(line.price_unit))) * 100 - discount) < 0.000001);
-      }
-      if (line.unit_visible === true) requireEvidence(line.unit === 'Units' && equal(line.unit_evidence, {visible: true, origin: 'native_column', native_column_absent: false}));
-      else requireEvidence(line.unit_visible === false && line.unit === '' && equal(line.unit_evidence, {visible: false, origin: 'native_feature_disabled', native_column_absent: true}));
+    if (role === 'settings') {
+      failedPage = 'source'; failedCheck = 'SOURCE_FIELDS';
+      const {source, customer_maps: customer, product_maps: product, cron} = evidence.pages;
+      for (const [name, value] of Object.entries({name: LABEL.source, company_id: LABEL.company, company_code: 'PARTS-A', code: 'B2B-ACCEPTANCE',
+        sales_user_id: LABEL.sales, processor_user_id: LABEL.operator})) visibleField(source, name, value);
+      failedCheck = 'SOURCE_INTEGRATION';
+      visibleField(source, 'integration_user_ids', [LABEL.integration]);
+      failedCheck = 'SOURCE_CRON_LINK';
+      requireEvidence(visibleField(source, 'processing_cron_id', `Order import / 订单导入: ${LABEL.source}`).linked === true);
+      failedPage = 'customer_maps'; failedCheck = 'CUSTOMER_MAPPINGS';
+      requireEvidence(equal(customer.columns.sort(), ['source_id', 'company_id', 'external_ref', 'partner_id', 'active'].sort()) &&
+        customer.rows.length === 1 && equal(customer.rows[0], {visible: true, source_id: LABEL.source, company_id: LABEL.company,
+          external_ref: 'BRIDGE-ACCEPTANCE-CUSTOMER', partner_id: LABEL.customer, active: true}));
+      failedPage = 'product_maps'; failedCheck = 'PRODUCT_MAPPINGS';
+      requireEvidence(equal(product.columns.sort(), ['source_id', 'company_id', 'external_sku', 'product_id', 'active'].sort()) && product.rows.length === 3);
+      for (const sku of ['1', '2', 'REPAIR']) requireEvidence(product.rows.filter(row => equal({...row, product_id: undefined}, {visible: true, source_id: LABEL.source,
+        company_id: LABEL.company, external_sku: `BRIDGE-ACCEPTANCE-${sku}`, product_id: undefined, active: true}) && productDisplay(row.product_id, sku === '1' ? 1 : 2)).length === 1);
+      failedPage = 'cron'; failedCheck = 'CRON_CONFIGURATION';
+      requireEvidence(cron.opened_by_link === true);
+      for (const [name, value] of Object.entries({name: `Order import / 订单导入: ${LABEL.source}`, active: false, user_id: LABEL.operator, code: 'model._process_pending()'})) visibleField(cron, name, value);
     }
-    Object.assign(safePages[`quote_${suffix}`], {name: expected.name, state: 'draft', amount_total: expected.amount_total, currency: 'CNY',
-      owner: LABEL.sales, creator: LABEL.operator, approval_required: true, product_line_count: 2,
-      lines: quote.lines.map(line => ({product: line.product, quantity: numeric(line.quantity), price_unit: numeric(line.price_unit), subtotal: numeric(line.subtotal),
-        discount: line.visibility.discount ? {visible: true, percent: numeric(line.discount), origin: 'native_column'} : {...line.discount_evidence},
-        unit: {...line.unit_evidence}, tax_empty_visible: true}))});
+    if (['operator', 'integration'].includes(role)) {
+      failedPage = 'role'; failedCheck = 'JOB_LIST_CONTROLS';
+      requireEvidence(equal(evidence.job_list_buttons, role === 'operator' ? ['action_process_pending'] : []));
+      for (const suffix of ['success', 'repaired']) {
+        failedPage = `job_${suffix}`; failedCheck = 'JOB_FORM_CONTROLS';
+        const job = evidence.pages[`job_${suffix}`];
+        requireEvidence(job.readonly === true && equal(job.write_controls, []) && equal(job.visible_buttons, role === 'operator' ? ['action_open_sale_order'] : []) && job.opened_from_visible_row === true);
+        failedCheck = 'JOB_FIELDS';
+        for (const [name, value] of Object.entries({external_order_id: external(suffix), source_id: LABEL.source, company_id: LABEL.company,
+          state: 'done', submitted_by_id: LABEL.integration})) visibleField(job, name, value);
+        failedCheck = 'JOB_ATTEMPTS';
+        requireEvidence(numeric(visibleField(job, 'attempt_count').value) === inputs.flow.jobs[suffix].attempt_count);
+        failedCheck = 'JOB_QUOTE_LINK';
+        const quote = visibleField(job, 'sale_order_id', inputs.flow.quotes[suffix].name); requireEvidence(quote.readonly === true && quote.no_open === true);
+        failedCheck = 'JOB_CREATOR';
+        requireEvidence(job.metadata?.visible === true && job.metadata.creator === LABEL.integration);
+        failedCheck = 'JOB_HISTORY';
+        validateEvents(job.history, EVENTS.filter(([, eventSuffix]) => suffix === eventSuffix));
+        failedPage = `audit_${suffix}`; failedCheck = 'AUDIT_READONLY';
+        const audit = evidence.pages[`audit_${suffix}`]; requireEvidence(audit.readonly === true);
+        failedCheck = 'AUDIT_HELPERS';
+        for (const name of ['raw_payload', 'canonical_payload', 'payload_hash']) {
+          const field = visibleField(audit, name); requireEvidence(field.readonly === true && field.nonempty === true && field.value === null);
+        }
+        Object.assign(safePages[`job_${suffix}`], {external_order_id: external(suffix), state: 'done', attempt_count: inputs.flow.jobs[suffix].attempt_count,
+          creator: LABEL.integration, processor: LABEL.operator, history_events: job.history.length});
+      }
+      failedPage = 'attempts'; failedCheck = 'ATTEMPT_CONTROLS';
+      requireEvidence(evidence.pages.attempts.readonly === true && equal(evidence.pages.attempts.write_controls, []));
+      failedCheck = 'ATTEMPT_HISTORY';
+      validateEvents(evidence.pages.attempts.rows, EVENTS, true);
+      safePages.attempts.event_count = 4;
+    }
+    if (['operator', 'sales'].includes(role)) for (const suffix of ['success', 'repaired']) {
+      failedPage = `quote_${suffix}`; failedCheck = 'QUOTE_CREATOR';
+      const quote = evidence.pages[`quote_${suffix}`], expected = inputs.flow.quotes[suffix];
+      requireEvidence(quote.opened_from_visible_row === true && quote.metadata?.visible === true && quote.metadata.creator === LABEL.operator);
+      failedCheck = 'QUOTE_FIELDS';
+      for (const [name, value] of Object.entries({name: expected.name, partner_id: LABEL.customer, user_id: LABEL.sales,
+        state: 'draft', origin: `B2B-ACCEPTANCE:${external(suffix)}`, client_order_ref: `B2B-ACCEPTANCE:${external(suffix)}`, portfolio_approval_state: 'draft'})) visibleField(quote, name, value);
+      failedCheck = 'QUOTE_TOTAL';
+      const totals = visibleField(quote, 'tax_totals'); requireEvidence(totals.readonly === true && totals.widget === 'account-tax-totals-field' && numeric(totals.value) === expected.amount_total);
+      failedCheck = 'QUOTE_COMPANY';
+      requireEvidence(equal(quote.company_scope, {visible: true, label: LABEL.company, origin: 'navbar'}));
+      failedCheck = 'QUOTE_APPROVAL';
+      requireEvidence(quote.approval_required?.visible === true && quote.approval_required.value === true &&
+        quote.approval_required.submit_button_visible === true && quote.approval_required.approval_tab_visible === true);
+      const wanted = suffix === 'success' ? [[2, 3, 35, 0], [1, 2, 120, 15]] : [[1, 1, 120, 15], [2, 2, 35, 15]];
+      failedCheck = 'QUOTE_LINE_COUNT';
+      requireEvidence(Array.isArray(quote.lines) && quote.lines.length === 2);
+      for (const [product, quantity, price, discount] of wanted) {
+        failedCheck = 'QUOTE_LINE_IDENTITY';
+        const matching = quote.lines.filter(line => productDisplay(line.product, product)); requireEvidence(matching.length === 1); const line = matching[0];
+        failedCheck = 'QUOTE_LINE_VISIBILITY';
+        requireEvidence(line.visible === true && line.product_visible === true &&
+          ['quantity', 'price_unit', 'subtotal', 'tax'].every(name => line.visibility?.[name] === true));
+        failedCheck = 'QUOTE_LINE_VALUES';
+        requireEvidence(numeric(line.quantity) === quantity && numeric(line.price_unit) === price && line.tax === '');
+        failedCheck = 'QUOTE_SUBTOTAL';
+        const subtotal = quantity * price * (1 - discount / 100);
+        requireEvidence(Math.abs(numeric(line.subtotal) - subtotal) < 0.000001);
+        failedCheck = 'QUOTE_DISCOUNT';
+        if (line.visibility.discount === true) {
+          requireEvidence(numeric(line.discount) === discount && equal(line.discount_evidence, {visible: true, origin: 'native_column', native_column_absent: false}));
+        } else {
+          requireEvidence(line.visibility.discount === false && line.discount === '' && equal(line.discount_evidence,
+            {visible: false, origin: 'visible_quantity_price_subtotal', derived_percent: discount, native_column_absent: true}) &&
+            Math.abs((1 - numeric(line.subtotal) / (numeric(line.quantity) * numeric(line.price_unit))) * 100 - discount) < 0.000001);
+        }
+        failedCheck = 'QUOTE_UNIT';
+        if (line.unit_visible === true) requireEvidence(line.unit === 'Units' && equal(line.unit_evidence, {visible: true, origin: 'native_column', native_column_absent: false}));
+        else requireEvidence(line.unit_visible === false && line.unit === '' && equal(line.unit_evidence, {visible: false, origin: 'native_feature_disabled', native_column_absent: true}));
+      }
+      Object.assign(safePages[`quote_${suffix}`], {name: expected.name, state: 'draft', amount_total: expected.amount_total, currency: 'CNY',
+        owner: LABEL.sales, creator: LABEL.operator, approval_required: true, product_line_count: 2,
+        lines: quote.lines.map(line => ({product: line.product, quantity: numeric(line.quantity), price_unit: numeric(line.price_unit), subtotal: numeric(line.subtotal),
+          discount: line.visibility.discount ? {visible: true, percent: numeric(line.discount), origin: 'native_column'} : {...line.discount_evidence},
+          unit: {...line.unit_evidence}, tax_empty_visible: true}))});
+    }
+    if (role === 'other_sales') {
+      failedPage = 'sales'; failedCheck = 'OTHER_COMPANY_EMPTY';
+      const page = evidence.pages.sales;
+      requireEvidence(equal(page.record_names, []) && page.foreign_quotes_absent === true && emptyState(page.empty_state));
+      failedCheck = 'SAMPLE_PLACEHOLDERS';
+      if (page.has_native_sample_data === true) requireEvidence(Number.isInteger(page.sample_row_count) && page.sample_row_count > 0 && page.sample_row_count <= 1000);
+      else requireEvidence(page.has_native_sample_data === false && page.sample_row_count === 0);
+      Object.assign(safePages.sales, {real_record_count: 0, sample_row_count: page.sample_row_count});
+    }
+    return {uid: inputs.roleReport.roles[role].uid, company_id: inputs.roleReport.roles[role].company_id,
+      rendered_login: true, menu_xmlids: [...evidence.menu_xmlids], config_headers: evidence.config_headers.map(header => ({...header, child_xmlids: [...header.child_xmlids]})),
+      import_payload_entry_count: 0, pages: safePages};
+  } catch {
+    throw new EvidenceFailure(failedPage, failedCheck);
   }
-  if (role === 'other_sales') {
-    const page = evidence.pages.sales;
-    requireEvidence(equal(page.record_names, []) && page.foreign_quotes_absent === true && emptyState(page.empty_state));
-    if (page.has_native_sample_data === true) requireEvidence(Number.isInteger(page.sample_row_count) && page.sample_row_count > 0 && page.sample_row_count <= 1000);
-    else requireEvidence(page.has_native_sample_data === false && page.sample_row_count === 0);
-    Object.assign(safePages.sales, {real_record_count: 0, sample_row_count: page.sample_row_count});
-  }
-  return {uid: inputs.roleReport.roles[role].uid, company_id: inputs.roleReport.roles[role].company_id,
-    rendered_login: true, menu_xmlids: [...evidence.menu_xmlids], config_headers: evidence.config_headers.map(header => ({...header, child_xmlids: [...header.child_xmlids]})),
-    import_payload_entry_count: 0, pages: safePages};
 }
 function validateBrowserReport(evidence, inputs) {
   validateRoleReport(inputs.roleReport, inputs); keys(evidence, ROLES);
@@ -396,10 +456,12 @@ function validateBrowserReport(evidence, inputs) {
     business_facts: {...inputs.roleReport.business_facts}, workflow: 'completed history inspected without replay'};
 }
 const STAGES = ['validation', 'chrome_resolution', 'chrome_startup', 'login', 'navigation', 'source', 'customer_maps', 'product_maps', 'cron',
-  'job_success', 'job_repaired', 'audit_success', 'audit_repaired', 'attempts', 'quote_success', 'quote_repaired', 'sales', 'metadata', 'screenshot', 'output'];
-function safeFailure(progress = {}) {
+  'job_success', 'job_repaired', 'audit_success', 'audit_repaired', 'attempts', 'quote_success', 'quote_repaired', 'sales', 'metadata', 'screenshot', 'role_validation', 'output'];
+function safeFailure(progress = {}, error) {
   return {schema_version: 1, ok: false, role: ROLES.includes(progress.role) ? progress.role : 'input',
-    stage: STAGES.includes(progress.stage) ? progress.stage : 'validation', reason: 'RENDERED_BROWSER_FAILED'};
+    stage: STAGES.includes(progress.stage) ? progress.stage : 'validation', reason: 'RENDERED_BROWSER_FAILED',
+    ...(error instanceof EvidenceFailure && FAILURE_PAGES.has(error.failed_page) && FAILURE_CHECKS.has(error.failed_check) ?
+      {failed_page: error.failed_page, failed_check: error.failed_check} : {})};
 }
 function writeOutput(filename, data, inputs) {
   filename = runtimePath(filename); assertNoInputAlias(filename, inputs.inputPaths);
@@ -623,26 +685,39 @@ async function jobPages(page, role, options, inputs, state, progress) {
   state.pages.attempts = {...view, rows: await historyRows(page, false)};
   await capture(page, role, 'attempts', state, options, inputs);
 }
+async function collectQuoteSnapshot(page, expectedName) {
+  requireEvidence(clean(expectedName));
+  return page.wait(inspect(`const form=document.querySelector('.o_form_view');
+    const books=[...document.querySelectorAll('.o_form_view .o_notebook')].filter(geometry);
+    const orderBooks=books.filter(book=>[...book.querySelectorAll('.o_notebook_headers .nav-link')]
+      .some(el=>visible(el)&&el.classList.contains('active')&&text(el)==='Order Lines'));
+    if(!visible(form)||read(form,'name').value!==${JSON.stringify(expectedName)}||orderBooks.length!==1)return false;
+    const pane=orderBooks[0].querySelector('.o_notebook_content > .tab-pane.active');
+    if(!settled(pane)||(pane.classList.contains('fade')&&!pane.classList.contains('show')))return false;
+    const businessRows=[...(field(form,'order_line')?.querySelectorAll('tr.o_data_row')||[])].filter(visible);
+    if(businessRows.length!==2)return false;
+    const totals=field(form,'tax_totals');
+    const fields=Object.fromEntries(['name','partner_id','state'].map(name=>[name,read(form,name)]));fields.state.value=status(fields.state.value);
+    fields.tax_totals={visible:visible(totals)&&visible(totals?.querySelector('span[name=amount_total]')),
+      value:text(totals?.querySelector('span[name=amount_total]')),readonly:!!totals?.classList.contains('o_readonly_modifier')&&!totals?.querySelector('input,.o_tax_group_edit'),
+      widget:totals?.classList.contains('o_field_account-tax-totals-field')?'account-tax-totals-field':''};
+    const rows=[...(field(form,'order_line')?.querySelectorAll('tr.o_data_row')||[])].filter(visible).map(row=>{const cell=name=>row.querySelector('td[name="'+name+'"]');return {
+      visible:visible(row),product:text(visible(cell('product_template_id'))?cell('product_template_id'):cell('product_id')),product_visible:visible(cell('product_template_id'))||visible(cell('product_id')),unit:text(cell('product_uom')),unit_visible:visible(cell('product_uom')),
+      quantity:text(cell('product_uom_qty')),price_unit:text(cell('price_unit')),discount:visible(cell('discount'))?text(cell('discount')):'',tax:text(cell('tax_id')),subtotal:text(cell('price_subtotal')),
+      unit_evidence:{visible:visible(cell('product_uom')),origin:visible(cell('product_uom'))?'native_column':'native_feature_disabled',native_column_absent:!cell('product_uom')},
+      discount_evidence:{visible:visible(cell('discount')),origin:visible(cell('discount'))?'native_column':'visible_quantity_price_subtotal',native_column_absent:!cell('discount')},
+      visibility:{quantity:visible(cell('product_uom_qty')),price_unit:visible(cell('price_unit')),subtotal:visible(cell('price_subtotal')),discount:visible(cell('discount')),tax:visible(cell('tax_id'))}};});
+    const submit=[...form.querySelectorAll('button[name=action_portfolio_submit]')].find(visible);
+    return {visible:visible(form),model:'sale.order',opened_from_visible_row:true,fields,lines:rows,company_scope:companyScope(),
+      approval_required:{visible:visible(submit),value:visible(submit),submit_button_visible:visible(submit),approval_tab_visible:false}};`));
+}
 async function quotePages(page, role, options, inputs, state, progress) {
   for (const suffix of ['success', 'repaired']) {
     const key = `quote_${suffix}`; progress.stage = key;
     await menuPage(page, role, 'sales', options, inputs, state);
     await clickVisibleRecord(page, 'name', inputs.flow.quotes[suffix].name);
     await page.wait(inspect(`const form=document.querySelector('.o_form_view');return visible(form)&&read(form,'name').value===${JSON.stringify(inputs.flow.quotes[suffix].name)};`));
-    const data = await page.evaluate(inspect(`const form=document.querySelector('.o_form_view'),totals=field(form,'tax_totals');
-      const fields=Object.fromEntries(['name','partner_id','state'].map(name=>[name,read(form,name)]));fields.state.value=status(fields.state.value);
-      fields.tax_totals={visible:visible(totals)&&visible(totals?.querySelector('span[name=amount_total]')),
-        value:text(totals?.querySelector('span[name=amount_total]')),readonly:!!totals?.classList.contains('o_readonly_modifier')&&!totals?.querySelector('input,.o_tax_group_edit'),
-        widget:totals?.classList.contains('o_field_account-tax-totals-field')?'account-tax-totals-field':''};
-      const rows=[...(field(form,'order_line')?.querySelectorAll('tr.o_data_row')||[])].filter(visible).map(row=>{const cell=name=>row.querySelector('td[name="'+name+'"]');return {
-        visible:visible(row),product:text(visible(cell('product_template_id'))?cell('product_template_id'):cell('product_id')),product_visible:visible(cell('product_template_id'))||visible(cell('product_id')),unit:text(cell('product_uom')),unit_visible:visible(cell('product_uom')),
-        quantity:text(cell('product_uom_qty')),price_unit:text(cell('price_unit')),discount:visible(cell('discount'))?text(cell('discount')):'',tax:text(cell('tax_id')),subtotal:text(cell('price_subtotal')),
-        unit_evidence:{visible:visible(cell('product_uom')),origin:visible(cell('product_uom'))?'native_column':'native_feature_disabled',native_column_absent:!cell('product_uom')},
-        discount_evidence:{visible:visible(cell('discount')),origin:visible(cell('discount'))?'native_column':'visible_quantity_price_subtotal',native_column_absent:!cell('discount')},
-        visibility:{quantity:visible(cell('product_uom_qty')),price_unit:visible(cell('price_unit')),subtotal:visible(cell('price_subtotal')),discount:visible(cell('discount')),tax:visible(cell('tax_id'))}};});
-      const submit=[...form.querySelectorAll('button[name=action_portfolio_submit]')].find(visible);
-      return {visible:visible(form),model:'sale.order',opened_from_visible_row:true,fields,lines:rows,company_scope:companyScope(),
-        approval_required:{visible:visible(submit),value:visible(submit),submit_button_visible:visible(submit),approval_tab_visible:false}};`));
+    const data = await collectQuoteSnapshot(page, inputs.flow.quotes[suffix].name);
     for (const line of data.lines) if (line.visibility.discount === false) {
       line.discount_evidence.derived_percent = Math.round((1 - numeric(line.subtotal) / (numeric(line.quantity) * numeric(line.price_unit))) * 100000000) / 1000000;
     }
@@ -693,6 +768,7 @@ async function checkRole(cdp, role, options, inputs, progress) {
     state.menu_xmlids = [...state.observedMenus]; delete state.observedMenus;
     state.import_root_visible = await page.evaluate(inspect(`return [...document.querySelectorAll('[data-menu-xmlid="portfolio_order_bridge.menu_import_root"]')].some(visible);`));
     state.import_payload_entry_count = await page.evaluate(inspect(`return [...document.querySelectorAll('[name=raw_payload] textarea,[name=canonical_payload] textarea,[name=payload] textarea,[name=order_payload] textarea,input[type=file]')].filter(el=>visible(el)&&!el.readOnly&&!el.disabled).length;`));
+    progress.stage = 'role_validation';
     validateDomEvidence(role, state, inputs); return state;
   });
 }
@@ -725,8 +801,8 @@ async function main(argv = process.argv.slice(2)) {
     const report = validateBrowserReport(evidence, inputs); progress.stage = 'output';
     writeOutput(path.join(options.outputDir, 'report.json'), JSON.stringify(report, null, 2) + '\n', inputs);
     process.stdout.write(JSON.stringify(report, null, 2) + '\n'); return 0;
-  } catch {
-    const report = safeFailure(progress);
+  } catch (error) {
+    const report = safeFailure(progress, error);
     if (startup && progress.stage === 'chrome_startup') report.startup_diagnostics = chromeStartupDiagnostics({stderr: startup.stderr.toString('utf8'),
       binary: startup.binary, spawn_code: startup.spawn_code, exit_code: chrome?.exitCode, signal: chrome?.signalCode, duration_ms: Date.now() - startup.started,
       port_file_present: fs.existsSync(startup.portFile), tmpdir_exists: !!launch && fs.existsSync(launch.ipcDirectory),
@@ -753,7 +829,7 @@ async function main(argv = process.argv.slice(2)) {
   }
 }
 module.exports = {parseArgs, readInputs, validateSourceReports, validateRoleReport, validateDomEvidence, validateBrowserReport,
-  classifyBusinessRows, clickVisibleRecord, collectVisibleMenus, collectImportHeaders, collectCronCode, auditListReadonly, waitForRenderedPane, captureSettledScreenshot, withRolePage, inspectAndRedactAudit, safeFailure, main};
+  classifyBusinessRows, clickVisibleRecord, collectVisibleMenus, collectImportHeaders, collectCronCode, auditListReadonly, collectQuoteSnapshot, waitForRenderedPane, captureSettledScreenshot, withRolePage, inspectAndRedactAudit, safeFailure, main};
 if (require.main === module) main().then(status => { process.exitCode = status; }).catch(() => {
   process.stdout.write(JSON.stringify(safeFailure()) + '\n'); process.exitCode = 1;
 });
