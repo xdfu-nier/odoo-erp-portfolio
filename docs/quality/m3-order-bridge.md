@@ -205,3 +205,19 @@ HTTP后profile及flow再次各运行两次，报告与HTTP前留存版本均字�
 实际DOM核对done/次数1与2、Integration接收及创建人、Operator事件执行人、失败/带原因重试/成功历史，native Metadata中的报价创建人为Operator、负责Sales，draft金额309/161.50元、来源/商品/数量/单价/税/小计和审批入口；菜单与处理按钮符合各角色边界，B公司只见原生空状态，sample占位行不计业务记录。折扣/单位显示按上节明确区分页面可见与HTTP证据。
 
 安全证据位于主项目`.runtime/m3-development-browser/report.json`及19张PNG。根代理逐项核对报告/文件头，查看19页缩略总览及关键原尺寸图；实际失败修复历史和草稿报价的虚构数据截图已收录[本地操作说明](m3-local-operations.md)。浏览器后只读SQL基线与安装前比较，原十九/十标识、原七角色摘要、A/B政策及库存10/毛交付100/退10/净交付90/净过账7650均未改变。**对应最终GitHub CI及PR #13合并仍未完成**；M4恢复/性能和人工UAT继续分别追踪。
+
+## 首轮完整导入页面CI与采集时序
+
+提交`6a6c7b0d42f135c824fb97b73d5a2ab44e8df5ff`的[PR工作流](https://github.com/xdfu-nier/odoo-erp-portfolio/actions/runs/41957147551)两任务成功。根代理下载`.runtime/m3-role-pages-ci`并核对47个白名单文件/26张PNG：Linux **600项post-tests、零失败/零错误**，2026-11-05 02:52:26 UTC，336.27秒、669721次查询；M1准备、M2履约、M3配置和导入四组报告各两次字节相同，新旧HTTP/浏览器四个报告均`ok=true`，库存10/净交付90/净过账7650对平。
+
+同提交的[push工作流](https://github.com/xdfu-nier/odoo-erp-portfolio/actions/runs/41957141079)scaffold通过，原生600项也通过，但新增浏览器在Operator最后角色校验失败，**不记为全部CI通过**。下载39个制品核对：原七角色与新增HTTP通过，Settings及Operator共11张PNG已生成；第二张报价图金额与商品正确，但原先采集只等表单单号，初始Order Lines页签异步呈现期间可能保留空行快照，后续截图等待无法修正先前数据。
+
+修正`25ef550a2e3b6c1f0360d07f237f4a8ddaf08ede`使报价采集在同一次有界DOM等待中确认指定报价、选中且完全呈现的Order Lines页签及两条可见业务行后才返回快照，金额/商品/权限断言保持；失败仅输出封闭的页面/检查代码，帮助定位而不输出正文或异常体。新增两个契约测试先实际RED，再最终**57项Node、162项Python及Ruff通过**，独立规格/质量复审通过；修复后的本机五角色19页再次通过。对应新提交的最终CI仍需单独核对，不沿用旧PR运行的成功结论。
+
+## 关联查询字段权限闭环
+
+最终源码审查发现Integration可通过Job→Source、Attempt→Job→Source的域查询探测受限`integration_user_ids`成员关系。根代理实际认证HTTP复现：直接Source查询为AccessError，而两位已知候选用户对应Job计数2/0、Attempt计数4/0。原检查只核对首段字段；Odoo将关系路径改写为`any`并调用私有`_search`，优化M2M SQL绕过了原公开查询门禁。
+
+修正`ee024c0e5f024bc89b078138918257606b12f1a1`在原生改写前按实际调用者逐段核对关联字段读权限，并递归检查`any/not any`域，不禁用合法关联查询。新增13项原生测试覆盖六种公开查询的ORM/RPC、点路径/嵌套域、保留sudo/伪造context/空结果反例及Operator、Settings、Integration的合法查询和返回契约。实际RED为13项/166个失败子场景、零错误；聚焦修复后13项通过，7.84秒、10481次查询。
+
+完整**613项post-tests、零失败/零错误**，2026-11-05 03:21:10 UTC结束，628.54秒、911465次查询（`.runtime/m3-related-query-full-native.log`）；162项Python、57项Node、Ruff、独立规格/质量及原最终审查的闭环复查通过。重启feature开发服务后，同一真实HTTP六条复现全部为AccessError，完整五角色HTTP与19页浏览器再次通过，仍为两任务/两草稿报价/四事件/309及161.50元。该源码版本的最终GitHub CI及合并仍待核对。
