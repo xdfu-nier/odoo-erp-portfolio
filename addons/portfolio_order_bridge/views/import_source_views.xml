@@ -1,0 +1,136 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_import_source_list" model="ir.ui.view">
+        <field name="name">portfolio.import.source.list</field>
+        <field name="model">portfolio.import.source</field>
+        <field name="arch" type="xml">
+            <list string="Import sources / 导入来源" delete="false">
+                <field name="name" string="Source / 来源"/>
+                <field name="company_id" string="Company / 公司"/>
+                <field name="company_code" string="External company / 外部公司编码"/>
+                <field name="code" string="Source code / 来源编码"/>
+                <field name="processor_user_id" groups="base.group_system,portfolio_order_bridge.group_import_operator"/>
+                <field name="active"/>
+            </list>
+        </field>
+    </record>
+    <record id="view_import_source_form" model="ir.ui.view">
+        <field name="name">portfolio.import.source.form</field>
+        <field name="model">portfolio.import.source</field>
+        <field name="arch" type="xml">
+            <form string="Import source / 导入来源" delete="false" duplicate="false">
+                <header>
+                    <button name="action_open_customer_mappings" type="object"
+                            string="Customers / 客户映射" invisible="not id"
+                            groups="base.group_system,portfolio_order_bridge.group_import_operator"/>
+                    <button name="action_open_product_mappings" type="object"
+                            string="Products / 产品映射" invisible="not id"
+                            groups="base.group_system,portfolio_order_bridge.group_import_operator"/>
+                    <button name="action_prepare_processing_cron" type="object"
+                            string="Prepare schedule / 准备处理计划" invisible="not id or not active"
+                            groups="base.group_system"/>
+                </header>
+                <sheet>
+                    <group>
+                        <field name="name" string="Source / 来源名称"/>
+                        <field name="active" string="Active / 启用来源"/>
+                        <field name="company_id" string="Company / 公司" readonly="id"/>
+                        <field name="company_code" string="External company / 外部公司编码" readonly="id"/>
+                        <field name="code" string="Source code / 来源编码" readonly="id"/>
+                    </group>
+                    <group string="Quotation defaults / 报价单默认值"
+                           groups="base.group_system,portfolio_order_bridge.group_import_operator">
+                        <field name="pricelist_id"/>
+                        <field name="warehouse_id"/>
+                        <field name="sales_user_id" string="Salesperson / 业务员"/>
+                        <field name="processor_user_id" string="Processor / 处理操作员"/>
+                        <field name="integration_user_ids" widget="many2many_tags"
+                               string="Integration users / 接入用户"/>
+                    </group>
+                    <group string="Automatic processing / 自动处理" groups="base.group_system">
+                        <field name="processing_cron_id" options="{'no_create': True}"/>
+                        <div class="text-muted">
+                            A new schedule starts disabled. Enable it in Scheduled Actions when ready.
+                            新处理计划默认停用，准备好后可在计划动作中启用。
+                        </div>
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+    <record id="view_import_customer_map_list" model="ir.ui.view">
+        <field name="name">portfolio.import.customer.map.list</field>
+        <field name="model">portfolio.import.customer.map</field>
+        <field name="arch" type="xml">
+            <list string="Customer mappings / 客户映射" delete="false">
+                <field name="source_id"/>
+                <field name="company_id"/>
+                <field name="external_ref" string="External customer / 外部客户编码"/>
+                <field name="partner_id" string="Customer / 客户"/>
+                <field name="active"/>
+            </list>
+        </field>
+    </record>
+    <record id="view_import_customer_map_form" model="ir.ui.view">
+        <field name="name">portfolio.import.customer.map.form</field>
+        <field name="model">portfolio.import.customer.map</field>
+        <field name="arch" type="xml">
+            <form string="Customer mapping / 客户映射" delete="false" duplicate="false">
+                <sheet>
+                    <group>
+                        <field name="source_id" readonly="id" options="{'no_create': True}"/>
+                        <field name="company_id" readonly="1"/>
+                        <field name="external_ref" string="External customer / 外部客户编码"/>
+                        <field name="partner_id" string="Customer / 原生客户"/>
+                        <field name="active" string="Active / 启用映射"/>
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+    <record id="view_import_product_map_list" model="ir.ui.view">
+        <field name="name">portfolio.import.product.map.list</field>
+        <field name="model">portfolio.import.product.map</field>
+        <field name="arch" type="xml">
+            <list string="Product mappings / 产品映射" delete="false">
+                <field name="source_id"/>
+                <field name="company_id"/>
+                <field name="external_sku" string="External SKU / 外部产品编码"/>
+                <field name="product_id" string="Product / 产品"/>
+                <field name="active"/>
+            </list>
+        </field>
+    </record>
+    <record id="view_import_product_map_form" model="ir.ui.view">
+        <field name="name">portfolio.import.product.map.form</field>
+        <field name="model">portfolio.import.product.map</field>
+        <field name="arch" type="xml">
+            <form string="Product mapping / 产品映射" delete="false" duplicate="false">
+                <sheet>
+                    <group>
+                        <field name="source_id" readonly="id" options="{'no_create': True}"/>
+                        <field name="company_id" readonly="1"/>
+                        <field name="external_sku" string="External SKU / 外部产品编码"/>
+                        <field name="product_id" string="Product / 原生产品"/>
+                        <field name="active" string="Active / 启用映射"/>
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+    <record id="action_import_sources" model="ir.actions.act_window">
+        <field name="name">Import sources / 导入来源</field>
+        <field name="res_model">portfolio.import.source</field>
+        <field name="view_mode">list,form</field>
+    </record>
+    <record id="action_import_customer_maps" model="ir.actions.act_window">
+        <field name="name">Customer mappings / 客户映射</field>
+        <field name="res_model">portfolio.import.customer.map</field>
+        <field name="view_mode">list,form</field>
+    </record>
+    <record id="action_import_product_maps" model="ir.actions.act_window">
+        <field name="name">Product mappings / 产品映射</field>
+        <field name="res_model">portfolio.import.product.map</field>
+        <field name="view_mode">list,form</field>
+    </record>
+</odoo>

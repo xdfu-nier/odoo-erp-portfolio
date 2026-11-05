@@ -22,14 +22,16 @@ jobs:
         run: python -X pycache_prefix=.cache/pycache -m unittest discover -s tests -v
       - name: Test browser evidence contracts with Node built-ins
         run: |
-          node --test tests/browser_m2c_check.test.js
+          node --test tests/browser_m2c_check.test.js tests/browser_order_bridge_check.test.js
           node --check scripts/browser_m2c_check.js
+          node --check scripts/browser_order_bridge_check.js
       - name: Compile Python source
         run: python -X pycache_prefix=.cache/pycache -m compileall -q scripts addons tests
 
   native-odoo:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Allow time for native integration tests and both role/browser evidence flows.
+    timeout-minutes: 30
     env:
       UV_CACHE_DIR: ${{ github.workspace }}/.cache/uv
       PYTHONPYCACHEPREFIX: ${{ github.workspace }}/.cache/pycache
@@ -53,14 +55,14 @@ jobs:
       - name: Verify configuration and bundled binaries
         run: |
           .venv/bin/python -m unittest discover -s tests -v
-          node --test tests/browser_m2c_check.test.js
+          node --test tests/browser_m2c_check.test.js tests/browser_order_bridge_check.test.js
           .venv/bin/ruff check scripts tests addons
       - name: Initialize real Odoo and run custom integration tests
         run: |
           .venv/bin/python scripts/manage.py init > .runtime/ci-init.log 2>&1
           .venv/bin/python .upstream/odoo/odoo-bin -c .runtime/odoo.conf \
-            -d odoo_portfolio_m1_test -i portfolio_trade --without-demo=all \
-            --test-enable --test-tags /portfolio_trade --stop-after-init \
+            -d odoo_portfolio_m1_test -i portfolio_trade,portfolio_order_bridge --without-demo=all \
+            --test-enable --test-tags /portfolio_trade,/portfolio_order_bridge --stop-after-init \
             --logfile .runtime/ci-business-tests.log
       - name: Prepare local acceptance data twice
         run: |
@@ -86,7 +88,26 @@ jobs:
           .venv/bin/python scripts/run_local_fulfillment.py --config .runtime/odoo.conf \
             --database odoo_portfolio --allow-local-acceptance > .runtime/ci-flow-second.json
           cmp .runtime/ci-flow-first.json .runtime/ci-flow-second.json
-      - name: Verify native HTTP and all seven rendered role pages
+      - name: Install the order bridge in the local development database
+        run: |
+          .venv/bin/python .upstream/odoo/odoo-bin -c .runtime/odoo.conf \
+            -d odoo_portfolio -i portfolio_order_bridge --without-demo=all --stop-after-init \
+            > .runtime/ci-bridge-install.log 2>&1
+      - name: Prepare the local order bridge profile twice
+        run: |
+          .venv/bin/python scripts/prepare_order_bridge.py --config .runtime/odoo.conf \
+            --database odoo_portfolio --allow-local-acceptance > .runtime/ci-bridge-profile-first.json
+          .venv/bin/python scripts/prepare_order_bridge.py --config .runtime/odoo.conf \
+            --database odoo_portfolio --allow-local-acceptance > .runtime/ci-bridge-profile-second.json
+          cmp .runtime/ci-bridge-profile-first.json .runtime/ci-bridge-profile-second.json
+      - name: Run the local order bridge flow twice
+        run: |
+          .venv/bin/python scripts/run_local_order_import.py --config .runtime/odoo.conf \
+            --database odoo_portfolio --allow-local-acceptance > .runtime/ci-bridge-flow-first.json
+          .venv/bin/python scripts/run_local_order_import.py --config .runtime/odoo.conf \
+            --database odoo_portfolio --allow-local-acceptance > .runtime/ci-bridge-flow-second.json
+          cmp .runtime/ci-bridge-flow-first.json .runtime/ci-bridge-flow-second.json
+      - name: Verify native HTTP and all seven M2 and five bridge roles
         run: |
           .venv/bin/python .upstream/odoo/odoo-bin -c .runtime/odoo.conf > .runtime/ci-server.log 2>&1 &
           odoo_ci_pid=$!
@@ -108,6 +129,22 @@ jobs:
             --credentials .runtime/acceptance-accounts.json \
             --acceptance-report .runtime/ci-acceptance-second.json --flow-report .runtime/ci-flow-second.json \
             --role-report .runtime/m2c-role-verification.json --output-dir .runtime/m2c-browser
+          .venv/bin/python scripts/verify_order_bridge_roles.py \
+            --base-url http://127.0.0.1:8069 --database odoo_portfolio \
+            --credentials .runtime/order-bridge-accounts.json \
+            --sales-credentials .runtime/acceptance-accounts.json \
+            --acceptance-report .runtime/ci-acceptance-second.json \
+            --profile-report .runtime/ci-bridge-profile-second.json \
+            --flow-report .runtime/ci-bridge-flow-second.json \
+            --output .runtime/m3-role-verification.json
+          node scripts/browser_order_bridge_check.js \
+            --base-url http://127.0.0.1:8069 --database odoo_portfolio \
+            --credentials .runtime/order-bridge-accounts.json \
+            --sales-credentials .runtime/acceptance-accounts.json \
+            --acceptance-report .runtime/ci-acceptance-second.json \
+            --profile-report .runtime/ci-bridge-profile-second.json \
+            --flow-report .runtime/ci-bridge-flow-second.json \
+            --role-report .runtime/m3-role-verification.json --output-dir .runtime/m3-browser
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -136,3 +173,29 @@ jobs:
             .runtime/m2c-browser/warehouse.png
             .runtime/m2c-browser/finance.png
             .runtime/m2c-browser/other_sales.png
+            .runtime/ci-bridge-install.log
+            .runtime/ci-bridge-profile-first.json
+            .runtime/ci-bridge-profile-second.json
+            .runtime/ci-bridge-flow-first.json
+            .runtime/ci-bridge-flow-second.json
+            .runtime/m3-role-verification.json
+            .runtime/m3-browser/report.json
+            .runtime/m3-browser/settings-source.png
+            .runtime/m3-browser/settings-customer_maps.png
+            .runtime/m3-browser/settings-product_maps.png
+            .runtime/m3-browser/settings-cron.png
+            .runtime/m3-browser/operator-job_success.png
+            .runtime/m3-browser/operator-job_repaired.png
+            .runtime/m3-browser/operator-attempts.png
+            .runtime/m3-browser/operator-audit_success.png
+            .runtime/m3-browser/operator-audit_repaired.png
+            .runtime/m3-browser/operator-quote_success.png
+            .runtime/m3-browser/operator-quote_repaired.png
+            .runtime/m3-browser/integration-job_success.png
+            .runtime/m3-browser/integration-job_repaired.png
+            .runtime/m3-browser/integration-attempts.png
+            .runtime/m3-browser/integration-audit_success.png
+            .runtime/m3-browser/integration-audit_repaired.png
+            .runtime/m3-browser/sales-quote_success.png
+            .runtime/m3-browser/sales-quote_repaired.png
+            .runtime/m3-browser/other_sales-sales.png

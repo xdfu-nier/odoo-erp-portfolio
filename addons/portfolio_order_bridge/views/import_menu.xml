@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <menuitem id="menu_import_root" name="Order import / 订单导入"
+              parent="portfolio_trade.menu_portfolio_root" sequence="40"
+              groups="base.group_system,portfolio_order_bridge.group_import_integration,portfolio_order_bridge.group_import_operator"/>
+    <menuitem id="menu_import_jobs" name="External orders / 外部订单"
+              parent="menu_import_root" action="action_import_jobs" sequence="10"
+              groups="portfolio_order_bridge.group_import_integration,portfolio_order_bridge.group_import_operator"/>
+    <menuitem id="menu_import_attempts" name="History / 处理记录"
+              parent="menu_import_root" action="action_import_attempts" sequence="20"
+              groups="portfolio_order_bridge.group_import_integration,portfolio_order_bridge.group_import_operator"/>
+    <menuitem id="menu_import_config" name="Import settings / 导入配置"
+              parent="menu_import_root" sequence="30" groups="base.group_system"/>
+    <menuitem id="menu_import_sources" name="Sources / 导入来源" parent="menu_import_config"
+              action="action_import_sources" sequence="10" groups="base.group_system"/>
+    <menuitem id="menu_import_customer_maps" name="Customer mappings / 客户映射" parent="menu_import_config"
+              action="action_import_customer_maps" sequence="20" groups="base.group_system"/>
+    <menuitem id="menu_import_product_maps" name="Product mappings / 产品映射" parent="menu_import_config"
+              action="action_import_product_maps" sequence="30" groups="base.group_system"/>
+</odoo>
